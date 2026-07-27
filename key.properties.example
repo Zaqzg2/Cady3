@@ -1,0 +1,12 @@
+# انسخ هذا الملف إلى android/key.properties عند البناء محليًا (بعد تشغيل
+# flutter create وتوليد مجلد android/) واملأ القيم الحقيقية.
+# لا تضف android/key.properties الحقيقي إلى Git أبدًا (موجود في .gitignore).
+#
+# نفس هذه القيم يجب أن تُضاف كأسرار (Secrets) في GitHub لتعمل عبر
+# GitHub Actions تلقائيًا: راجع قسم "الرفع على GitHub وبناء APK تلقائيًا"
+# في README.md
+
+storePassword=ضع_كلمة_مرور_الكيستور_هنا
+keyPassword=ضع_كلمة_مرور_المفتاح_هنا
+keyAlias=cadysalesapp
+storeFile=keystore.jks
