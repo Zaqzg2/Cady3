@@ -1,0 +1,136 @@
+name: بناء APK
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: استنساخ المستودع
+        uses: actions/checkout@v4
+
+      - name: تجهيز Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: تجهيز Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: عرض إصدار Flutter
+        run: flutter --version
+
+      - name: تنزيل حزم Dart/Flutter
+        run: flutter pub get
+
+      # يولّد مجلد android/ تلقائيًا فقط إن لم يكن موجودًا في المستودع بعد
+      # (لأن هذا المستودع يحتوي كود Dart فقط ولا توجد بيئة Flutter محلية
+      # لدى صاحب المشروع لتوليده يدويًا حاليًا)
+      - name: توليد مجلد android إن لم يكن موجودًا
+        run: |
+          if [ ! -d "android" ]; then
+            echo "لا يوجد مجلد android — يتم توليده الآن عبر flutter create"
+            flutter create --platforms=android --org com.cady --project-name cadysalesapp /tmp/scaffold
+            cp -r /tmp/scaffold/android ./android
+          else
+            echo "مجلد android موجود مسبقًا في المستودع — سيُستخدم كما هو"
+          fi
+
+      - name: ترقيع صلاحيات AndroidManifest (بلوتوث)
+        run: python3 scripts/patch_manifest.py
+
+      - name: رفع compileSdk/targetSdk إلى 36 (مطلوب لبعض الحزم مثل file_picker)
+        run: python3 scripts/patch_compile_sdk.py
+
+      - name: رفع compileSdk إلى 36 لكل الإضافات (المشاريع الفرعية) من الجذر
+        run: python3 scripts/patch_root_compile_sdk.py
+
+      - name: قبول تراخيص Android SDK وتثبيت المنصة 36
+        run: |
+          yes | flutter doctor --android-licenses || true
+          SDKMANAGER=$(find "$ANDROID_HOME" "$ANDROID_SDK_ROOT" -name "sdkmanager" 2>/dev/null | head -n1)
+          if [ -n "$SDKMANAGER" ]; then
+            yes | "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" || true
+          else
+            echo "تحذير: لم يُعثر على sdkmanager — سيحاول Gradle التنزيل التلقائي عند البناء"
+          fi
+
+      - name: فك تشفير الكيستور (Keystore) من الأسرار
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/keystore.jks
+            echo "تم فك تشفير الكيستور بنجاح"
+          else
+            echo "تنبيه: السر ANDROID_KEYSTORE_BASE64 غير موجود — سيُبنى APK بتوقيع debug فقط"
+          fi
+
+      - name: إنشاء key.properties
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -f android/app/keystore.jks ]; then
+            cat > android/key.properties << PROPS
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyPassword=$ANDROID_KEY_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          storeFile=keystore.jks
+          PROPS
+            echo "تم إنشاء key.properties"
+          fi
+
+      - name: ترقيع build.gradle لإضافة توقيع الإصدار
+        run: python3 scripts/patch_build_gradle.py
+
+      - name: عرض محتوى build.gradle النهائي (للتشخيص)
+        run: |
+          echo "===== android/build.gradle(.kts) الجذري بعد كل الترقيعات ====="
+          cat android/build.gradle.kts 2>/dev/null || cat android/build.gradle 2>/dev/null
+          echo "===== android/app/build.gradle(.kts) بعد كل الترقيعات ====="
+          cat android/app/build.gradle.kts 2>/dev/null || cat android/app/build.gradle 2>/dev/null
+
+      - name: التحقق من سلامة الكيستور (تشخيص مشاكل التوقيع)
+        if: hashFiles('android/app/keystore.jks') != ''
+        run: |
+          echo "حجم ملف الكيستور:"
+          ls -la android/app/keystore.jks
+          echo "محتوى الكيستور (بدون كشف كلمات المرور):"
+          keytool -list -v -keystore android/app/keystore.jks \
+            -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" | head -20
+
+      - name: بناء APK (release)
+        run: flutter build apk --release --verbose
+
+      - name: رفع سجلات Gradle عند الفشل (للتشخيص)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-failure-logs
+          path: |
+            android/app/build/outputs/logs/**
+            build/reports/**
+            android/**/build/reports/**
+            ~/.gradle/daemon/**/*.log
+          if-no-files-found: ignore
+
+      - name: رفع APK كمُخرَج للعمل (Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cady-sales-app-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error

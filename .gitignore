@@ -1,0 +1,33 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# Android
+android/local.properties
+android/key.properties
+android/app/keystore.jks
+android/**/*.jks
+android/.gradle/
+android/gradle-wrapper.jar
+*.hprof
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+
+# متفرقات
+.DS_Store
+.env
+*.log
+
+# نسخ احتياطية مصدَّرة محليًا (لا يجب رفعها للمستودع)
+*نسخة_احتياطية*.json
