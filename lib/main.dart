@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
 import 'providers/app_provider.dart';
@@ -11,7 +14,47 @@ import 'screens/lock_screen.dart';
 import 'services/auth_service.dart';
 
 void main() {
-  runApp(const CadySalesApp());
+  // نلتقط أي خطأ غير متوقّع في أي مكان بالتطبيق (بما فيه أخطاء غير متزامنة)
+  // ونطبعه بوضوح في السجل (logcat) بدل ما يختفي بصمت ويترك المستخدم أمام
+  // شاشة بيضاء بلا أي تفسير.
+  runZonedGuarded(() {
+    WidgetsFlutterBinding.ensureInitialized();
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      debugPrint('FlutterError: ${details.exceptionAsString()}');
+      debugPrint('${details.stack}');
+    };
+    // افتراضياً، في نسخة release، أي خطأ أثناء بناء widget يظهر كمربع
+    // رمادي فارغ بلا أي رسالة (لإخفاء التفاصيل التقنية عن المستخدم
+    // النهائي). نتجاوز هذا مؤقتاً لعرض رسالة الخطأ الحقيقية على الشاشة
+    // نفسها، لتسهيل التشخيص، بدل تخمين السبب من مربع رمادي بلا معنى.
+    ErrorWidget.builder = (FlutterErrorDetails details) {
+      // نستخرج فقط الأسطر المتعلقة بكود التطبيق نفسه (package:cady_sales_app)
+      // من تتبّع الخطأ (stack trace)، ونتجاهل أسطر إطار عمل Flutter الداخلية
+      // الطويلة، حتى تظهر رسالة قصيرة وواضحة تحدد الملف والسطر بالضبط.
+      final stackLines = details.stack
+              ?.toString()
+              .split('\n')
+              .where((l) => l.contains('package:cady_sales_app'))
+              .take(4)
+              .join('\n') ??
+          '';
+      return Container(
+        color: Colors.red.shade50,
+        padding: const EdgeInsets.all(8),
+        child: SingleChildScrollView(
+          child: Text(
+            'خطأ في بناء الواجهة:\n${details.exceptionAsString()}\n\n$stackLines',
+            style: const TextStyle(color: Colors.red, fontSize: 10),
+          ),
+        ),
+      );
+    };
+    runApp(const CadySalesApp());
+  }, (error, stack) {
+    debugPrint('Uncaught zone error: $error');
+    debugPrint('$stack');
+  });
 }
 
 class CadySalesApp extends StatelessWidget {
@@ -28,6 +71,11 @@ class CadySalesApp extends StatelessWidget {
             debugShowCheckedModeBanner: false,
             locale: const Locale('ar'),
             supportedLocales: const [Locale('ar')],
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
             theme: AppTheme.light(),
             darkTheme: AppTheme.dark(),
             themeMode: app.settings.darkMode ? ThemeMode.dark : ThemeMode.light,
@@ -37,7 +85,38 @@ class CadySalesApp extends StatelessWidget {
             ),
             home: app.loading
                 ? const Scaffold(body: Center(child: CircularProgressIndicator()))
-                : const AppGate(),
+                : app.initError != null
+                    ? Scaffold(
+                        body: SafeArea(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.error_outline, color: Colors.red, size: 56),
+                                const SizedBox(height: 16),
+                                const Text(
+                                  'حدث خطأ أثناء بدء التطبيق',
+                                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  app.initError!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.black54),
+                                ),
+                                const SizedBox(height: 24),
+                                ElevatedButton(
+                                  onPressed: () => app.init(),
+                                  child: const Text('إعادة المحاولة'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )
+                    : const AppGate(),
           );
         },
       ),
@@ -55,6 +134,7 @@ class AppGate extends StatefulWidget {
 
 class _AppGateState extends State<AppGate> {
   bool? _needsUnlock;
+  String? _error;
 
   @override
   void initState() {
@@ -63,12 +143,27 @@ class _AppGateState extends State<AppGate> {
   }
 
   Future<void> _check() async {
-    final set = await AuthService.instance.isPasswordSet();
-    if (mounted) setState(() => _needsUnlock = set);
+    try {
+      final set = await AuthService.instance.isPasswordSet();
+      if (mounted) setState(() => _needsUnlock = set);
+    } catch (e) {
+      debugPrint('AppGate._check() failed: $e');
+      if (mounted) setState(() => _error = e.toString());
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_error != null) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text('خطأ: $_error', textAlign: TextAlign.center),
+          ),
+        ),
+      );
+    }
     if (_needsUnlock == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }

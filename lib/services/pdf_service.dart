@@ -7,6 +7,7 @@ import 'package:pdf/widgets.dart' as pw;
 
 import '../models/company_settings.dart';
 import '../models/invoice.dart';
+import '../models/ledger_entry.dart';
 import '../models/receipt.dart';
 
 /// توليد ملفات PDF حقيقية بعرض 80مم مطابقة تمامًا لما تطبعه
@@ -281,6 +282,112 @@ class PdfService {
             ],
           );
         },
+      ),
+    );
+    return doc.save();
+  }
+
+  /// كشف حساب العميل — بعكس الفاتورة/السند (80مم حراري)، يُستخدم مقاس A4
+  /// عادي هنا لأن كشف الحساب قد يحتوي عشرات الصفوف ولا يُطبع على طابعة حرارية.
+  Future<Uint8List> generateStatementPdf(
+    String customerName,
+    List<LedgerEntry> entries,
+    CompanySettings settings,
+  ) async {
+    await _ensureFonts();
+    final df = DateFormat('yyyy/MM/dd');
+    final doc = pw.Document();
+
+    String docTypeLabel(LedgerDocType t) {
+      switch (t) {
+        case LedgerDocType.invoiceSale:
+          return 'فاتورة بيع';
+        case LedgerDocType.invoiceReturn:
+          return 'فاتورة مرتجع';
+        case LedgerDocType.receipt:
+          return 'سند قبض';
+        case LedgerDocType.opening:
+          return 'رصيد افتتاحي';
+      }
+    }
+
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(24),
+        header: (context) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.center,
+          children: [
+            _header(settings, docTitle: 'كشف حساب: $customerName'),
+            pw.SizedBox(height: 8),
+          ],
+        ),
+        build: (context) => [
+          pw.Table(
+            border: pw.TableBorder.all(width: 0.5, color: PdfColors.grey700),
+            columnWidths: const {
+              0: pw.FlexColumnWidth(1.3), // التاريخ
+              1: pw.FlexColumnWidth(2), // البيان
+              2: pw.FlexColumnWidth(1.3), // رقم المستند
+              3: pw.FlexColumnWidth(1.2), // مدين
+              4: pw.FlexColumnWidth(1.2), // دائن
+              5: pw.FlexColumnWidth(1.4), // الرصيد
+            },
+            children: [
+              pw.TableRow(
+                decoration: const pw.BoxDecoration(color: PdfColors.grey300),
+                children: [
+                  'التاريخ',
+                  'البيان',
+                  'رقم المستند',
+                  'مدين',
+                  'دائن',
+                  'الرصيد',
+                ]
+                    .map((h) => pw.Padding(
+                          padding: const pw.EdgeInsets.all(4),
+                          child: pw.Text(
+                            h,
+                            style: pw.TextStyle(
+                                font: _arabicFontBold,
+                                fontSize: settings.tableFontSize),
+                            textDirection: pw.TextDirection.rtl,
+                            textAlign: pw.TextAlign.center,
+                          ),
+                        ))
+                    .toList(),
+              ),
+              for (final e in entries)
+                pw.TableRow(
+                  children: [
+                    df.format(e.date),
+                    docTypeLabel(e.docType),
+                    e.docNumber,
+                    e.debit > 0 ? _currency.format(e.debit) : '-',
+                    e.credit > 0 ? _currency.format(e.credit) : '-',
+                    _currency.format(e.runningBalance),
+                  ]
+                      .map((v) => pw.Padding(
+                            padding: pw.EdgeInsets.symmetric(
+                                vertical: settings.rowSpacing, horizontal: 3),
+                            child: pw.Text(
+                              v,
+                              style: pw.TextStyle(
+                                  font: _arabicFont,
+                                  fontSize: settings.tableFontSize),
+                              textDirection: pw.TextDirection.rtl,
+                              textAlign: pw.TextAlign.center,
+                            ),
+                          ))
+                      .toList(),
+                ),
+            ],
+          ),
+          pw.SizedBox(height: 12),
+          if (entries.isNotEmpty)
+            _kv('الرصيد الحالي', _currency.format(entries.last.runningBalance),
+                fontSize: 12),
+        ],
       ),
     );
     return doc.save();

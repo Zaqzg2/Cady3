@@ -9,6 +9,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # مطلوبة لتوفير MaterialLocalizations/WidgetsLocalizations للعربية —
+  # بدونها تفشل أي widget يعتمد عليها (AppBar, TextField, إلخ) بخطأ:
+  # "AppBar widgets require MaterialLocalizations to be provided by
+  #  a Localizations widget ancestor"
+  flutter_localizations:
+    sdk: flutter
   cupertino_icons: ^1.0.6
 
   # State management
@@ -20,7 +26,7 @@ dependencies:
   path_provider: ^2.1.4
 
   # التنسيقات (تاريخ / عملة ريال يمني)
-  intl: ^0.19.0
+  intl: ^0.20.2
 
   # معرفات فريدة
   uuid: ^4.4.2
@@ -62,3 +68,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
+    - assets/fonts/

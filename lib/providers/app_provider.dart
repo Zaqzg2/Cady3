@@ -20,13 +20,23 @@ class AppProvider extends ChangeNotifier {
   List<Product> products = [];
   CompanySettings settings = CompanySettings();
   bool loading = true;
+  String? initError;
 
   Future<void> init() async {
     loading = true;
+    initError = null;
     notifyListeners();
-    customers = await DbService.instance.getCustomers();
-    products = await DbService.instance.getProducts();
-    settings = await SettingsService.instance.load();
+    try {
+      customers = await DbService.instance.getCustomers();
+      products = await DbService.instance.getProducts();
+      settings = await SettingsService.instance.load();
+    } catch (e, st) {
+      // نطبع الخطأ بالتفصيل في السجل (logcat) ونحفظه لعرضه في الواجهة أيضاً
+      // بدل ترك المستخدم أمام شاشة بيضاء بلا أي توضيح لسبب التعليق.
+      debugPrint('AppProvider.init() failed: $e');
+      debugPrint('$st');
+      initError = e.toString();
+    }
     loading = false;
     notifyListeners();
   }

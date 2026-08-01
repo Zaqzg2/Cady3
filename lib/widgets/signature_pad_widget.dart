@@ -23,6 +23,12 @@ class SignaturePadWidget extends StatefulWidget {
 
 class _SignaturePadWidgetState extends State<SignaturePadWidget> {
   late final SignatureController _controller;
+  // إذا كان هناك توقيع محفوظ مسبقًا (تعديل فاتورة قديمة)، نعرضه كصورة
+  // ثابتة بدل لوحة رسم فاضية، حتى لا يُعتبر "فاضياً" ويُمسح بالخطأ عند
+  // الحفظ دون رسم توقيع جديد. المستخدم يقدر يضغط "إعادة التوقيع" إذا
+  // يريد تغييره فعليًا.
+  late bool _showingExistingImage;
+  String? _existingPath;
 
   @override
   void initState() {
@@ -32,6 +38,9 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
       penColor: Colors.black,
       exportBackgroundColor: Colors.white,
     );
+    _existingPath = widget.existingPath;
+    _showingExistingImage =
+        _existingPath != null && File(_existingPath!).existsSync();
   }
 
   @override
@@ -42,7 +51,9 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
 
   Future<void> _save() async {
     if (_controller.isEmpty) {
-      widget.onSaved(null);
+      // لا نمسح توقيعًا محفوظًا مسبقًا لمجرد أن لوحة الرسم فاضية —
+      // هذا يحصل فقط إذا لم يرسم المستخدم شيئًا جديدًا أصلاً.
+      widget.onSaved(_existingPath);
       return;
     }
     final data = await _controller.toPngBytes();
@@ -51,6 +62,7 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
     final file = File(
         '${dir.path}/sig_${DateTime.now().millisecondsSinceEpoch}.png');
     await file.writeAsBytes(data);
+    _existingPath = file.path;
     widget.onSaved(file.path);
   }
 
@@ -68,6 +80,8 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
             TextButton.icon(
               onPressed: () {
                 _controller.clear();
+                setState(() => _showingExistingImage = false);
+                _existingPath = null;
                 widget.onSaved(null);
               },
               icon: const Icon(Icons.refresh),
@@ -83,19 +97,40 @@ class _SignaturePadWidgetState extends State<SignaturePadWidget> {
             border: Border.all(color: Colors.orange, width: 2.5),
             borderRadius: BorderRadius.circular(14),
           ),
-          child: Signature(
-            controller: _controller,
-            backgroundColor: Colors.white,
-          ),
+          child: _showingExistingImage
+              ? Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Image.file(File(_existingPath!), fit: BoxFit.contain),
+                    ),
+                    Positioned(
+                      bottom: 6,
+                      left: 6,
+                      child: TextButton(
+                        style: TextButton.styleFrom(
+                          backgroundColor: Colors.orange.shade50,
+                        ),
+                        onPressed: () =>
+                            setState(() => _showingExistingImage = false),
+                        child: const Text('إعادة التوقيع'),
+                      ),
+                    ),
+                  ],
+                )
+              : Signature(
+                  controller: _controller,
+                  backgroundColor: Colors.white,
+                ),
         ),
         const SizedBox(height: 6),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
-            onPressed: _save,
-            child: const Text('اعتماد التوقيع'),
+        if (!_showingExistingImage)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: _save,
+              child: const Text('اعتماد التوقيع'),
+            ),
           ),
-        ),
       ],
     );
   }

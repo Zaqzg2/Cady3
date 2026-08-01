@@ -33,6 +33,7 @@ class CompanySettings {
   String? logoPath;
   String repName;
   double tableFontSize;
+  double rowSpacing;
   List<ColumnConfig> tableColumns;
   String? printerAddress; // عنوان MAC لطابعة البلوتوث المحفوظة
   String? printerName;
@@ -45,6 +46,7 @@ class CompanySettings {
     this.logoPath,
     this.repName = '',
     this.tableFontSize = 9,
+    this.rowSpacing = 4,
     List<ColumnConfig>? tableColumns,
     this.printerAddress,
     this.printerName,
@@ -64,6 +66,7 @@ class CompanySettings {
         'logoPath': logoPath,
         'repName': repName,
         'tableFontSize': tableFontSize,
+        'rowSpacing': rowSpacing,
         'tableColumns': tableColumns.map((c) => c.toMap()).toList(),
         'printerAddress': printerAddress,
         'printerName': printerName,
@@ -77,6 +80,7 @@ class CompanySettings {
         logoPath: m['logoPath'] as String?,
         repName: m['repName'] as String? ?? '',
         tableFontSize: (m['tableFontSize'] as num?)?.toDouble() ?? 9,
+        rowSpacing: (m['rowSpacing'] as num?)?.toDouble() ?? 4,
         tableColumns: (m['tableColumns'] as List?)
                 ?.map((e) => ColumnConfig.fromMap(Map<String, dynamic>.from(e)))
                 .toList() ??

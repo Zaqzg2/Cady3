@@ -25,6 +25,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _companyAddress;
   late TextEditingController _repName;
   double _fontSize = 9;
+  double _rowSpacing = 4;
   List<BluetoothInfo> _pairedDevices = [];
   String? _selectedPrinterMac;
   bool _passwordEnabled = false;
@@ -38,6 +39,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _companyAddress = TextEditingController(text: s.companyAddress);
     _repName = TextEditingController(text: s.repName);
     _fontSize = s.tableFontSize;
+    _rowSpacing = s.rowSpacing;
     _selectedPrinterMac = s.printerAddress;
     _loadPairedDevices();
     _loadAuthState();
@@ -94,16 +96,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     s.companyAddress = _companyAddress.text.trim();
     s.repName = _repName.text.trim();
     s.tableFontSize = _fontSize;
+    s.rowSpacing = _rowSpacing;
     await app.saveSettings(s);
     _snack('تم حفظ الإعدادات');
-  }
-
-  Future<void> _toggleColumn(ColumnConfig col, bool value) async {
-    final app = context.read<AppProvider>();
-    final s = app.settings;
-    col.visible = value;
-    await app.saveSettings(s);
-    setState(() {});
   }
 
   Future<void> _toggleDarkMode(bool value) async {
@@ -270,14 +265,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               decoration: const InputDecoration(labelText: 'اسم المندوب')),
           const Divider(height: 32),
 
-          const Text('جدول الأصناف في الفاتورة',
+          const Text('إعدادات جدول الفاتورة',
               style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          ...s.tableColumns.map((c) => SwitchListTile(
-                title: Text(c.label),
-                value: c.visible,
-                onChanged: (v) => _toggleColumn(c, v),
-              )),
           const SizedBox(height: 8),
           Text('حجم خط الجدول: ${_fontSize.toStringAsFixed(0)}'),
           Slider(
@@ -287,6 +276,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             divisions: 8,
             label: _fontSize.toStringAsFixed(0),
             onChanged: (v) => setState(() => _fontSize = v),
+          ),
+          Text('تباعد صفوف الجدول: ${_rowSpacing.toStringAsFixed(0)}'),
+          Slider(
+            value: _rowSpacing,
+            min: 0,
+            max: 16,
+            divisions: 8,
+            label: _rowSpacing.toStringAsFixed(0),
+            onChanged: (v) => setState(() => _rowSpacing = v),
           ),
           const Divider(height: 32),
 

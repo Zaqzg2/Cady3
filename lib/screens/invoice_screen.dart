@@ -2,8 +2,10 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'pdf_preview_screen.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:file_picker/file_picker.dart';
 
 import '../models/customer.dart';
 import '../models/product.dart';
@@ -207,10 +209,35 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
     if (inv == null) return;
     final app = context.read<AppProvider>();
     final bytes = await PdfService.instance.generateInvoicePdf(inv, app.settings);
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/فاتورة_${inv.docNumber}.pdf');
-    await file.writeAsBytes(bytes);
-    _snack('تم حفظ PDF: ${file.path}');
+    // نستخدم file_picker لنطلب من المستخدم يختار مكان حفظ حقيقي يقدر
+    // يوصله بعدين (مثل مجلد التنزيلات)، بدل حفظه بصمت داخل مساحة
+    // التطبيق الخاصة غير المرئية له عبر مدير الملفات.
+    final outputPath = await FilePicker.platform.saveFile(
+      dialogTitle: 'اختر مكان حفظ الفاتورة',
+      fileName: 'فاتورة_${inv.docNumber}.pdf',
+      bytes: bytes,
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+    if (outputPath == null) return; // ألغى المستخدم
+    _snack('تم حفظ PDF بنجاح');
+  }
+
+  Future<void> _previewInvoice() async {
+    final inv = await _finalizedForOutput();
+    if (inv == null) return;
+    final app = context.read<AppProvider>();
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PdfPreviewScreen(
+          title: _isReturn ? 'فاتورة مرتجع' : 'فاتورة بيع',
+          shareFileName: 'فاتورة_${inv.docNumber}.pdf',
+          buildPdf: () => PdfService.instance.generateInvoicePdf(inv, app.settings),
+        ),
+      ),
+    );
   }
 
   Future<void> _sharePdf() async {
@@ -440,6 +467,12 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
                   icon: const Icon(Icons.save),
                   label: const Text('حفظ'),
                   onPressed: _save,
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.visibility_outlined),
+                  label: const Text('معاينة الفاتورة'),
+                  onPressed: _previewInvoice,
                 ),
                 const SizedBox(height: 10),
                 Row(
