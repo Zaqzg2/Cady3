@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 
 import '../models/customer.dart';
 import '../models/product.dart';
@@ -19,6 +21,11 @@ class DbService {
   }
 
   Future<Database> _initDb() async {
+    // على الويب لا توجد قنوات منصّة (platform channels)، فنستخدم مصنع
+    // قاعدة بيانات بديل يخزّن البيانات عبر IndexedDB داخل المتصفح
+    if (kIsWeb) {
+      databaseFactory = databaseFactoryFfiWeb;
+    }
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'cady_sales.db');
     return openDatabase(

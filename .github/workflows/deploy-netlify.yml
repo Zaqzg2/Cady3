@@ -37,6 +37,11 @@ jobs:
       - name: تفعيل دعم الويب
         run: flutter config --enable-web
 
+      # ينسخ ملفات sqlite3.wasm و sqflite_sw.js اللازمة لعمل قاعدة
+      # البيانات على المتصفح داخل مجلد web/
+      - name: تجهيز ملفات قاعدة بيانات الويب
+        run: dart run sqflite_common_ffi_web:setup
+
       - name: بناء نسخة الويب (release)
         run: flutter build web --release
 
