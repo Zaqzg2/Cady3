@@ -23,7 +23,7 @@ dependencies:
   # Local database (فواتير / عملاء / منتجات / سندات)
   sqflite: ^2.3.3+1
   # نسخة القاعدة الخاصة بالويب (تعمل عبر IndexedDB/wasm بدل قنوات المنصّة)
-  sqflite_common_ffi_web: ^2.3.0
+  sqflite_common_ffi_web: ^1.1.2
   path: ^1.9.0
   path_provider: ^2.1.4
 
