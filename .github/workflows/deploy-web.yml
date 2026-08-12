@@ -39,7 +39,7 @@ jobs:
           fi
 
       # ------------------------------------------------------------
-      # Firebase config من الأسرار (بدون كمبيوتر)
+      # Firebase config من الأسرار — يفشل بوضوح إن نقص السر أو بقي وهمياً
       # ------------------------------------------------------------
       - name: كتابة google-services / firebase config
         env:
@@ -47,26 +47,67 @@ jobs:
           FIREBASE_OPTIONS_DART: ${{ secrets.FIREBASE_OPTIONS_DART }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
         run: |
+          set -e
           mkdir -p android/app
-          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
-            echo "✅ google-services.json"
-            python3 scripts/generate_firebase_options.py || true
+
+          echo "===== فحص الأسرار ====="
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "❌ السر GOOGLE_SERVICES_JSON فارغ أو غير موجود"
+            echo "   GitHub → Settings → Secrets and variables → Actions"
+            echo "   New secret: GOOGLE_SERVICES_JSON = محتوى google-services.json كاملاً"
+            exit 1
           fi
+          echo "✅ GOOGLE_SERVICES_JSON موجود (طول ${#GOOGLE_SERVICES_JSON} حرف)"
+
+          # كتابة الملف
+          printf '%s\n' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+
+          # التحقق أنه JSON صالح وليس PLACEHOLDER
+          python3 - <<'PY'
+          import json, sys
+          p = "android/app/google-services.json"
+          try:
+              data = json.load(open(p, encoding="utf-8"))
+          except Exception as e:
+              print(f"❌ google-services.json ليس JSON صالحاً: {e}")
+              sys.exit(1)
+          pid = data.get("project_info", {}).get("project_id", "")
+          if not pid or pid == "YOUR_PROJECT_ID" or "YOUR_" in pid:
+              print(f"❌ project_id وهمي أو فارغ: {pid!r}")
+              print("   تأكد أنك لصقت الملف الحقيقي من Firebase Console وليس القالب")
+              sys.exit(1)
+          clients = data.get("client") or []
+          if not clients:
+              print("❌ لا يوجد client داخل google-services.json")
+              sys.exit(1)
+          print(f"✅ JSON صالح — project_id={pid}")
+          PY
+
+          # توليد firebase_options.dart
           if [ -n "$FIREBASE_OPTIONS_DART" ]; then
-            echo "$FIREBASE_OPTIONS_DART" > lib/firebase_options.dart
-            echo "✅ firebase_options.dart من السر"
-          fi
-          if [ -n "$FIREBASE_PROJECT_ID" ]; then
-            printf '%s\n' "{" "  \"projects\": {" "    \"default\": \"$FIREBASE_PROJECT_ID\"" "  }" "}" > .firebaserc
-            echo "✅ .firebaserc → $FIREBASE_PROJECT_ID"
-          elif [ -f android/app/google-services.json ]; then
-            PID=$(python3 -c "import json; print(json.load(open('android/app/google-services.json'))['project_info']['project_id'])" 2>/dev/null || true)
-            if [ -n "$PID" ] && [ "$PID" != "YOUR_PROJECT_ID" ]; then
-              printf '%s\n' "{" "  \"projects\": {" "    \"default\": \"$PID\"" "  }" "}" > .firebaserc
-              echo "✅ .firebaserc استُخرج من google-services → $PID"
+            printf '%s\n' "$FIREBASE_OPTIONS_DART" > lib/firebase_options.dart
+            echo "✅ firebase_options.dart كُتب من السر FIREBASE_OPTIONS_DART"
+          else
+            python3 scripts/generate_firebase_options.py
+            if grep -qE 'YOUR_PROJECT_ID|MISSING|YOUR_ANDROID_API_KEY' lib/firebase_options.dart 2>/dev/null; then
+              echo "❌ firebase_options.dart ما زال يحتوي قيماً وهمية بعد التوليد"
+              exit 1
             fi
+            echo "✅ firebase_options.dart وُلّد من google-services.json"
           fi
+
+          # .firebaserc
+          if [ -n "$FIREBASE_PROJECT_ID" ]; then
+            PID="$FIREBASE_PROJECT_ID"
+          else
+            PID=$(python3 -c "import json; print(json.load(open('android/app/google-services.json'))['project_info']['project_id'])")
+          fi
+          printf '%s\n' "{" "  \"projects\": {" "    \"default\": \"$PID\"" "  }" "}" > .firebaserc
+          echo "✅ .firebaserc → $PID"
+
+          echo "===== ملخص الملفات ====="
+          wc -c android/app/google-services.json lib/firebase_options.dart .firebaserc
+          head -5 .firebaserc
 
       - name: تنزيل الحزم
         run: flutter pub get
@@ -80,11 +121,33 @@ jobs:
           du -sh build/web
           ls -la build/web | head -20
 
-      # نشر Hosting + قواعد Firestore
       - name: تثبيت Firebase CLI
         run: npm install -g firebase-tools
 
-      - name: نشر إلى Firebase Hosting + Firestore rules
+      # نشر Hosting أولاً (يجب أن ينجح)، ثم Firestore إن أمكن بدون إيقاف الويب
+      - name: نشر Firebase Hosting
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          set -e
+          if [ -n "$GOOGLE_APPLICATION_CREDENTIALS_JSON" ]; then
+            echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/firebase-sa.json
+            export GOOGLE_APPLICATION_CREDENTIALS=/tmp/firebase-sa.json
+            echo "مصادقة: Service Account"
+            firebase deploy --only hosting --non-interactive --force
+          elif [ -n "$FIREBASE_TOKEN" ]; then
+            echo "مصادقة: FIREBASE_TOKEN"
+            firebase deploy --only hosting --token "$FIREBASE_TOKEN" --non-interactive --force
+          else
+            echo "❌ لا يوجد FIREBASE_TOKEN ولا FIREBASE_SERVICE_ACCOUNT"
+            echo "   أضف أحدهما في GitHub Secrets"
+            exit 1
+          fi
+          echo "✅ تم نشر Hosting"
+
+      - name: نشر قواعد Firestore (اختياري — لا يوقف الويب إن فشل)
+        continue-on-error: true
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
@@ -92,19 +155,14 @@ jobs:
           if [ -n "$GOOGLE_APPLICATION_CREDENTIALS_JSON" ]; then
             echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/firebase-sa.json
             export GOOGLE_APPLICATION_CREDENTIALS=/tmp/firebase-sa.json
-            echo "استخدام Service Account"
-            firebase deploy --only hosting,firestore --non-interactive --force
+            firebase deploy --only firestore --non-interactive --force
           elif [ -n "$FIREBASE_TOKEN" ]; then
-            echo "استخدام FIREBASE_TOKEN"
-            firebase deploy --only hosting,firestore --token "$FIREBASE_TOKEN" --non-interactive --force
+            firebase deploy --only firestore --token "$FIREBASE_TOKEN" --non-interactive --force
           else
-            echo "❌ لا يوجد FIREBASE_TOKEN ولا FIREBASE_SERVICE_ACCOUNT"
-            echo "   أضف أحد السرّين في GitHub Secrets ثم أعد التشغيل"
-            echo "   كيف تحصل على Token من الهاتف:"
-            echo "   1) من أي جهاز/Codespace: firebase login:ci"
-            echo "   2) أو أنشئ Service Account من Firebase Console → Project settings → Service accounts"
-            exit 1
+            echo "تخطي Firestore — لا توجد مصادقة"
+            exit 0
           fi
+          echo "✅ تم نشر Firestore rules"
 
       - name: رفع مجلد الويب كـ Artifact (احتياطي)
         uses: actions/upload-artifact@v4
