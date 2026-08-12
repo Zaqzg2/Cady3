@@ -1,8 +1,5 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
 import 'pdf_preview_screen.dart';
@@ -12,6 +9,8 @@ import '../models/receipt.dart';
 import '../providers/app_provider.dart';
 import '../services/pdf_service.dart';
 import '../services/print_service.dart';
+import '../services/feedback_service.dart';
+import '../services/share_util.dart';
 import '../utils/formatters.dart';
 import '../widgets/big_card.dart';
 import '../widgets/signature_pad_widget.dart';
@@ -20,7 +19,8 @@ import '../widgets/signature_pad_widget.dart';
 /// للتعديل، اختيار العميل، توقيع المندوب، ثم عرض رصيد العميل بعد السند
 class ReceiptScreen extends StatefulWidget {
   final Receipt? existing;
-  const ReceiptScreen({super.key, this.existing});
+  final Customer? initialCustomer;
+  const ReceiptScreen({super.key, this.existing, this.initialCustomer});
 
   @override
   State<ReceiptScreen> createState() => _ReceiptScreenState();
@@ -36,6 +36,8 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
   ReceiptMethod _method = ReceiptMethod.cash;
   Customer? _customer;
   String? _repSignaturePath;
+  // يُلتقط مرة واحدة فقط عند الإنشاء، ويُحافَظ عليه كما هو عند التعديل
+  String _repName = '';
   double _previewBalance = 0;
   bool _saving = false;
 
@@ -52,14 +54,22 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
       _method = e.method;
       _notesCtrl.text = e.notes;
       _repSignaturePath = e.repSignaturePath;
+      _repName = e.repName;
       _customer = app.customers.firstWhere((c) => c.id == e.customerId,
           orElse: () => Customer(id: e.customerId, name: e.customerName));
     } else {
       _id = _uuid.v4();
       _date = DateTime.now();
+      // توقيع افتراضي محفوظ للمندوب من الإعدادات، بدل توقيعه يدويًا بكل سند
+      _repSignaturePath = app.settings.defaultRepSignaturePath;
+      final currentName = app.currentUser?.displayName.trim() ?? '';
+      _repName = currentName.isNotEmpty ? currentName : app.settings.repName;
       app.peekNextReceiptNumber().then((n) {
         if (mounted) setState(() => _docNumberCtrl.text = n);
       });
+      if (widget.initialCustomer != null) {
+        _customer = widget.initialCustomer;
+      }
     }
     _amountCtrl.addListener(_recalc);
     _recalc();
@@ -135,8 +145,17 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
       customerId: _customer!.id,
       customerName: _customer!.name,
       repSignaturePath: _repSignaturePath,
+      repName: _repName,
       notes: _notesCtrl.text.trim(),
     );
+  }
+
+  @override
+  void dispose() {
+    _docNumberCtrl.dispose();
+    _amountCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
   }
 
   void _snack(String msg) =>
@@ -149,6 +168,7 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
     try {
       await context.read<AppProvider>().saveReceipt(r);
       if (mounted) {
+        FeedbackService.onSaved(context);
         _snack('تم حفظ السند بنجاح');
         Navigator.pop(context);
       }
@@ -162,7 +182,8 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
     if (r == null) return;
     final app = context.read<AppProvider>();
     final bytes = await PdfService.instance.generateReceiptPdf(r, app.settings);
-    final ok = await PrintService.instance.printPdfBytes(bytes);
+    final ok = await PrintService.instance
+        .printPdfBytes(bytes, printerMac: app.settings.printerAddress);
     _snack(ok ? 'تمت الطباعة' : 'تعذّر الاتصال بالطابعة — تحقق من الإعدادات');
   }
 
@@ -204,11 +225,8 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
     if (r == null) return;
     final app = context.read<AppProvider>();
     final bytes = await PdfService.instance.generateReceiptPdf(r, app.settings);
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/سند_قبض_${r.docNumber}.pdf');
-    await file.writeAsBytes(bytes);
-    await SharePlus.instance.share(
-        ShareParams(files: [XFile(file.path)], text: 'سند قبض ${r.docNumber}'));
+    await ShareUtil.shareBytes(bytes, 'سند_قبض_${r.docNumber}.pdf',
+        text: 'سند قبض ${r.docNumber}');
   }
 
   @override

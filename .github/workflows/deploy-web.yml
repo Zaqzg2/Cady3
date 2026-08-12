@@ -1,0 +1,115 @@
+name: بناء ونشر الويب (Firebase Hosting)
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'android/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: استنساخ المستودع
+        uses: actions/checkout@v4
+
+      - name: تجهيز Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: عرض إصدار Flutter
+        run: flutter --version
+
+      - name: تفعيل منصة الويب إن لزم
+        run: |
+          flutter config --enable-web
+          if [ ! -d "web" ]; then
+            echo "توليد مجلد web/"
+            flutter create --platforms=web --org com.cady --project-name cadysalesapp /tmp/web_scaffold
+            cp -r /tmp/web_scaffold/web ./web
+          fi
+
+      # ------------------------------------------------------------
+      # Firebase config من الأسرار (بدون كمبيوتر)
+      # ------------------------------------------------------------
+      - name: كتابة google-services / firebase config
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+          FIREBASE_OPTIONS_DART: ${{ secrets.FIREBASE_OPTIONS_DART }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          mkdir -p android/app
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+            echo "✅ google-services.json"
+            python3 scripts/generate_firebase_options.py || true
+          fi
+          if [ -n "$FIREBASE_OPTIONS_DART" ]; then
+            echo "$FIREBASE_OPTIONS_DART" > lib/firebase_options.dart
+            echo "✅ firebase_options.dart من السر"
+          fi
+          if [ -n "$FIREBASE_PROJECT_ID" ]; then
+            printf '%s\n' "{" "  \"projects\": {" "    \"default\": \"$FIREBASE_PROJECT_ID\"" "  }" "}" > .firebaserc
+            echo "✅ .firebaserc → $FIREBASE_PROJECT_ID"
+          elif [ -f android/app/google-services.json ]; then
+            PID=$(python3 -c "import json; print(json.load(open('android/app/google-services.json'))['project_info']['project_id'])" 2>/dev/null || true)
+            if [ -n "$PID" ] && [ "$PID" != "YOUR_PROJECT_ID" ]; then
+              printf '%s\n' "{" "  \"projects\": {" "    \"default\": \"$PID\"" "  }" "}" > .firebaserc
+              echo "✅ .firebaserc استُخرج من google-services → $PID"
+            fi
+          fi
+
+      - name: تنزيل الحزم
+        run: flutter pub get
+
+      - name: بناء Flutter Web (release)
+        run: flutter build web --release --no-tree-shake-icons
+
+      - name: عرض حجم البناء
+        run: |
+          echo "===== build/web ====="
+          du -sh build/web
+          ls -la build/web | head -20
+
+      # نشر Hosting + قواعد Firestore
+      - name: تثبيت Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: نشر إلى Firebase Hosting + Firestore rules
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -n "$GOOGLE_APPLICATION_CREDENTIALS_JSON" ]; then
+            echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > /tmp/firebase-sa.json
+            export GOOGLE_APPLICATION_CREDENTIALS=/tmp/firebase-sa.json
+            echo "استخدام Service Account"
+            firebase deploy --only hosting,firestore --non-interactive --force
+          elif [ -n "$FIREBASE_TOKEN" ]; then
+            echo "استخدام FIREBASE_TOKEN"
+            firebase deploy --only hosting,firestore --token "$FIREBASE_TOKEN" --non-interactive --force
+          else
+            echo "❌ لا يوجد FIREBASE_TOKEN ولا FIREBASE_SERVICE_ACCOUNT"
+            echo "   أضف أحد السرّين في GitHub Secrets ثم أعد التشغيل"
+            echo "   كيف تحصل على Token من الهاتف:"
+            echo "   1) من أي جهاز/Codespace: firebase login:ci"
+            echo "   2) أو أنشئ Service Account من Firebase Console → Project settings → Service accounts"
+            exit 1
+          fi
+
+      - name: رفع مجلد الويب كـ Artifact (احتياطي)
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: build/web
+          if-no-files-found: ignore
+          retention-days: 14

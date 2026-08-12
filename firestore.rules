@@ -1,0 +1,65 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- مساعدات ----
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // دور المستخدم مخزّن في users/{uid}.role = "manager" | "rep"
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isManager() {
+      return isSignedIn() && userRole() == "manager";
+    }
+
+    function isRep() {
+      return isSignedIn() && userRole() == "rep";
+    }
+
+    // ---- المستخدمون ----
+    match /users/{userId} {
+      allow read: if isSignedIn() && (isOwner(userId) || isManager());
+      allow create: if isSignedIn() && isOwner(userId);
+      allow update: if isSignedIn() && (isOwner(userId) || isManager());
+      allow delete: if isManager();
+    }
+
+    // ---- بيانات المندوب (عملاء / منتجات / فواتير / سندات) ----
+    // المسار: reps/{repId}/customers/{id}  ... إلخ
+    match /reps/{repId}/{collection}/{docId} {
+      allow read: if isSignedIn() && (isOwner(repId) || isManager());
+      allow write: if isSignedIn() && (isOwner(repId) || isManager());
+    }
+
+    // قائمة العمليات المعلّقة للمزامنة
+    match /reps/{repId}/pending/{docId} {
+      allow read, write: if isSignedIn() && (isOwner(repId) || isManager());
+    }
+
+    // سجل المزامنة (للمدير)
+    match /sync_logs/{logId} {
+      allow read: if isManager();
+      allow create: if isSignedIn();
+      allow update, delete: if isManager();
+    }
+
+    // إعدادات الشركة المشتركة (يقرأها الجميع، يعدّلها المدير فقط)
+    match /company/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isManager();
+    }
+
+    // افتراضي: رفض كل شيء آخر
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

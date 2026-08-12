@@ -1,4 +1,5 @@
 import 'invoice_item.dart';
+import 'sync_status.dart';
 
 enum InvoiceKind { sale, saleReturn } // فاتورة بيع / فاتورة مرتجع
 enum PaymentMode { cash, credit } // نقد / آجل
@@ -16,8 +17,14 @@ class Invoice {
   double discountAmount;
   String notes;
   String? signaturePath; // مسار صورة توقيع العميل (PNG)
+  String repName; // اسم المندوب الذي أنشأ الفاتورة (يُلتقط وقت الإنشاء فقط)
   double balanceAfter; // رصيد مديونية العميل بعد هذه الفاتورة
+  bool isPrinted; // هل طُبعت هذه الفاتورة من قبل
+  bool isShared; // هل شُوركت (واتساب/مشاركة) من قبل
+  bool isPinned; // تثبيت الفاتورة أعلى سجل المستندات
   DateTime createdAt;
+  SyncStatus syncStatus;
+  DateTime updatedAt;
 
   Invoice({
     required this.id,
@@ -32,9 +39,16 @@ class Invoice {
     this.discountAmount = 0,
     this.notes = '',
     this.signaturePath,
+    this.repName = '',
     this.balanceAfter = 0,
+    this.isPrinted = false,
+    this.isShared = false,
+    this.isPinned = false,
     DateTime? createdAt,
-  }) : createdAt = createdAt ?? DateTime.now();
+    this.syncStatus = SyncStatus.pending,
+    DateTime? updatedAt,
+  })  : createdAt = createdAt ?? DateTime.now(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   double get subTotal => items.fold(0.0, (sum, it) => sum + it.total);
 
@@ -64,8 +78,14 @@ class Invoice {
         'discountAmount': discountAmount,
         'notes': notes,
         'signaturePath': signaturePath,
+        'repName': repName,
         'balanceAfter': balanceAfter,
+        'isPrinted': isPrinted,
+        'isShared': isShared,
+        'isPinned': isPinned,
         'createdAt': createdAt.toIso8601String(),
+        'syncStatus': syncStatus.name,
+        'updatedAt': updatedAt.toIso8601String(),
       };
 
   factory Invoice.fromMap(Map<String, dynamic> m) => Invoice(
@@ -84,7 +104,19 @@ class Invoice {
         discountAmount: (m['discountAmount'] as num?)?.toDouble() ?? 0,
         notes: m['notes'] as String? ?? '',
         signaturePath: m['signaturePath'] as String?,
+        repName: m['repName'] as String? ?? '',
         balanceAfter: (m['balanceAfter'] as num?)?.toDouble() ?? 0,
+        isPrinted: (m['isPrinted'] as bool?) ?? false,
+        isShared: (m['isShared'] as bool?) ?? false,
+        isPinned: (m['isPinned'] as bool?) ?? false,
         createdAt: DateTime.parse(m['createdAt'] as String),
+        syncStatus: m['syncStatus'] != null
+            ? SyncStatus.values.firstWhere((s) => s.name == m['syncStatus'],
+                orElse: () => SyncStatus.synced)
+            : SyncStatus.synced,
+        updatedAt: m['updatedAt'] != null
+            ? DateTime.parse(m['updatedAt'] as String)
+            : DateTime.now(),
       );
 }
+

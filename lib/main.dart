@@ -3,27 +3,94 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 
+import 'firebase_options.dart';
 import 'providers/app_provider.dart';
+import 'models/company_settings.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/customers_screen.dart';
 import 'screens/products_screen.dart';
 import 'screens/reports_screen.dart';
 import 'screens/lock_screen.dart';
+import 'screens/setup_manager_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/manager/manager_root_nav.dart';
 import 'services/auth_service.dart';
+import 'models/user_account.dart';
+import 'widgets/privacy_cover_overlay.dart';
 
-void main() {
+/// يحسب أقصر مدة خمول مؤدّية لقفل التطبيق تلقائيًا، بين خيار "القفل
+/// التلقائي" و"تسجيل الخروج التلقائي" (أيهما أقصر يُطبَّق أولاً)، أو
+/// null إن كان كلاهما معطّلاً
+Duration? effectiveLockDuration(CompanySettings s) {
+  Duration? fromAutoLock;
+  switch (s.autoLockOption) {
+    case AutoLockOption.immediate:
+      fromAutoLock = Duration.zero;
+      break;
+    case AutoLockOption.oneMinute:
+      fromAutoLock = const Duration(minutes: 1);
+      break;
+    case AutoLockOption.fiveMinutes:
+      fromAutoLock = const Duration(minutes: 5);
+      break;
+    case AutoLockOption.never:
+      fromAutoLock = null;
+      break;
+  }
+  final fromLogout =
+      s.autoLogoutHours > 0 ? Duration(hours: s.autoLogoutHours) : null;
+  if (fromAutoLock == null) return fromLogout;
+  if (fromLogout == null) return fromAutoLock;
+  return fromAutoLock < fromLogout ? fromAutoLock : fromLogout;
+}
+
+Future<void> main() async {
   // نلتقط أي خطأ غير متوقّع في أي مكان بالتطبيق (بما فيه أخطاء غير متزامنة)
   // ونطبعه بوضوح في السجل (logcat) بدل ما يختفي بصمت ويترك المستخدم أمام
   // شاشة بيضاء بلا أي تفسير.
-  runZonedGuarded(() {
+  runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
-    FlutterError.onError = (FlutterErrorDetails details) {
-      FlutterError.presentError(details);
-      debugPrint('FlutterError: ${details.exceptionAsString()}');
-      debugPrint('${details.stack}');
-    };
+
+    // تهيئة Firebase (يتطلب تشغيل flutterfire configure أولاً)
+    // إذا كانت القيم ما زالت PLACEHOLDER سيفشل التهيئة — نلتقط الخطأ
+    // ونكمل تشغيل التطبيق بدون Firebase حتى يُكتمل الربط.
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      // Crashlytics غير مدعوم على الويب بنفس الطريقة — نربطه على الموبايل فقط
+      if (!kIsWeb) {
+        FlutterError.onError = (FlutterErrorDetails details) {
+          FlutterError.presentError(details);
+          FirebaseCrashlytics.instance.recordFlutterFatalError(details);
+          debugPrint('FlutterError: ${details.exceptionAsString()}');
+          debugPrint('${details.stack}');
+        };
+        PlatformDispatcher.instance.onError = (error, stack) {
+          FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+          return true;
+        };
+      } else {
+        FlutterError.onError = (FlutterErrorDetails details) {
+          FlutterError.presentError(details);
+          debugPrint('FlutterError: ${details.exceptionAsString()}');
+        };
+      }
+      debugPrint('Firebase initialized successfully');
+    } catch (e, st) {
+      debugPrint('Firebase init skipped (config missing or invalid): $e');
+      debugPrint('$st');
+      FlutterError.onError = (FlutterErrorDetails details) {
+        FlutterError.presentError(details);
+        debugPrint('FlutterError: ${details.exceptionAsString()}');
+        debugPrint('${details.stack}');
+      };
+    }
+
     // افتراضياً، في نسخة release، أي خطأ أثناء بناء widget يظهر كمربع
     // رمادي فارغ بلا أي رسالة (لإخفاء التفاصيل التقنية عن المستخدم
     // النهائي). نتجاوز هذا مؤقتاً لعرض رسالة الخطأ الحقيقية على الشاشة
@@ -54,6 +121,11 @@ void main() {
   }, (error, stack) {
     debugPrint('Uncaught zone error: $error');
     debugPrint('$stack');
+    if (!kIsWeb) {
+      try {
+        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      } catch (_) {}
+    }
   });
 }
 
@@ -76,12 +148,20 @@ class CadySalesApp extends StatelessWidget {
               GlobalWidgetsLocalizations.delegate,
               GlobalCupertinoLocalizations.delegate,
             ],
-            theme: AppTheme.light(),
-            darkTheme: AppTheme.dark(),
-            themeMode: app.settings.darkMode ? ThemeMode.dark : ThemeMode.light,
+            theme: AppTheme.light(seedColor: app.settings.themeColor),
+            darkTheme: AppTheme.dark(seedColor: app.settings.themeColor),
+            themeMode: switch (app.settings.themeMode) {
+              AppThemeMode.system => ThemeMode.system,
+              AppThemeMode.light => ThemeMode.light,
+              AppThemeMode.dark => ThemeMode.dark,
+            },
             builder: (context, child) => Directionality(
               textDirection: TextDirection.rtl,
-              child: child!,
+              child: MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(app.settings.appFontScale)),
+                child: child!,
+              ),
             ),
             home: app.loading
                 ? const Scaffold(body: Center(child: CircularProgressIndicator()))
@@ -116,7 +196,11 @@ class CadySalesApp extends StatelessWidget {
                           ),
                         ),
                       )
-                    : const AppGate(),
+                    : !app.usersExist
+                        ? const SetupManagerScreen()
+                        : app.currentUser == null
+                            ? const LoginScreen()
+                            : const AppGate(),
           );
         },
       ),
@@ -132,14 +216,44 @@ class AppGate extends StatefulWidget {
   State<AppGate> createState() => _AppGateState();
 }
 
-class _AppGateState extends State<AppGate> {
+class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
   bool? _needsUnlock;
   String? _error;
+  DateTime? _pausedAt;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _check();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      _pausedAt ??= DateTime.now();
+      return;
+    }
+    final pausedAt = _pausedAt;
+    _pausedAt = null;
+    if (pausedAt != null) _maybeLock(pausedAt);
+  }
+
+  Future<void> _maybeLock(DateTime pausedAt) async {
+    final isSet = await AuthService.instance.isPasswordSet();
+    if (!isSet || !mounted) return;
+    final settings = context.read<AppProvider>().settings;
+    final threshold = effectiveLockDuration(settings);
+    if (threshold == null) return;
+    if (DateTime.now().difference(pausedAt) >= threshold) {
+      if (mounted) setState(() => _needsUnlock = true);
+    }
   }
 
   Future<void> _check() async {
@@ -170,7 +284,10 @@ class _AppGateState extends State<AppGate> {
     if (_needsUnlock == true) {
       return LockScreen(onUnlocked: () => setState(() => _needsUnlock = false));
     }
-    return const RootNav();
+    final role = context.watch<AppProvider>().currentUser?.role;
+    return PrivacyCoverOverlay(
+      child: role == UserRole.manager ? const ManagerRootNav() : const RootNav(),
+    );
   }
 }
 

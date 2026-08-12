@@ -1,8 +1,6 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../models/customer.dart';
 import '../models/product.dart';
@@ -12,10 +10,12 @@ import '../models/company_settings.dart';
 import 'db_service.dart';
 import 'settings_service.dart';
 import 'numbering_service.dart';
+import 'share_util.dart';
 
 /// نسخ احتياطي كامل لكل بيانات التطبيق (عملاء، منتجات، فواتير، سندات،
-/// إعدادات) إلى ملف JSON واحد يمكن مشاركته أو حفظه (Google Drive، بريد،
-/// واتساب...)، مع إمكانية استيراده لاحقًا على نفس الجهاز أو جهاز آخر.
+/// إعدادات) إلى JSON يمكن مشاركته أو حفظه (Google Drive، بريد، واتساب...)،
+/// مع إمكانية استيراده لاحقًا على نفس الجهاز أو جهاز آخر. كل شيء يعمل في
+/// الذاكرة (بدون كتابة ملفات على القرص) حتى يعمل على الجوال والويب معًا.
 class BackupService {
   BackupService._();
   static final BackupService instance = BackupService._();
@@ -40,40 +40,45 @@ class BackupService {
     };
   }
 
-  /// يُنشئ ملف النسخة الاحتياطية محليًا ويعيد مساره
-  Future<File> exportToFile() async {
+  /// يبني محتوى النسخة الاحتياطية كنص JSON (بدون أي كتابة على القرص)
+  Future<String> exportToJsonString() async {
     final data = await _buildBackupJson();
-    final dir = await getApplicationDocumentsDirectory();
+    return jsonEncode(data);
+  }
+
+  String _backupFileName() {
     final stamp = DateTime.now().toIso8601String().replaceAll(':', '-');
-    final file = File('${dir.path}/كادي_نسخة_احتياطية_$stamp.json');
-    await file.writeAsString(jsonEncode(data));
-    return file;
+    return 'كادي_نسخة_احتياطية_$stamp.json';
   }
 
-  /// يُنشئ الملف ثم يفتح واجهة المشاركة (حفظ في Drive / واتساب / بريد...)
-  Future<File> exportAndShare() async {
-    final file = await exportToFile();
-    await SharePlus.instance.share(ShareParams(
-        files: [XFile(file.path)],
-        text: 'نسخة احتياطية - تطبيق كادي للمنظفات'));
-    return file;
+  /// يبني النسخة الاحتياطية ثم يفتح واجهة المشاركة (حفظ في Drive / واتساب
+  /// / بريد... أو تنزيل مباشر على الويب)
+  Future<void> exportAndShare() async {
+    final json = await exportToJsonString();
+    final bytes = Uint8List.fromList(utf8.encode(json));
+    await ShareUtil.shareBytes(bytes, _backupFileName(),
+        mimeType: 'application/json',
+        text: 'نسخة احتياطية - تطبيق كادي للمنظفات');
   }
 
-  /// يفتح منتقي ملفات ليختار المستخدم ملف JSON للاستيراد
-  Future<String?> pickBackupFilePath() async {
+  /// يفتح منتقي ملفات ليختار المستخدم ملف JSON للاستيراد، ويعيد محتواه
+  /// كنص مباشرة (withData: true تضمن توفر البايتات على كل المنصات، بما
+  /// فيها الويب حيث لا يوجد مسار ملف حقيقي أصلاً)
+  Future<String?> pickBackupContent() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['json'],
+      withData: true,
     );
-    if (result == null || result.files.single.path == null) return null;
-    return result.files.single.path;
+    final bytes = result?.files.single.bytes;
+    if (bytes == null) return null;
+    return utf8.decode(bytes);
   }
 
-  /// يستورد نسخة احتياطية من مسار ملف، ويدمج البيانات (upsert بالمعرف)
-  /// دون حذف أي بيانات حالية غير موجودة في الملف المستورد.
-  Future<void> importFromFile(String path) async {
-    final content = await File(path).readAsString();
-    final Map<String, dynamic> data = jsonDecode(content);
+  /// يستورد نسخة احتياطية من نص JSON، ويدمج البيانات (upsert بالمعرف) دون
+  /// حذف أي بيانات حالية غير موجودة بالنسخة المستوردة.
+  Future<void> importFromJson(String jsonContent) async {
+    final Map<String, dynamic> data = jsonDecode(jsonContent);
 
     final customers = (data['customers'] as List? ?? [])
         .map((e) => Customer.fromMap(Map<String, dynamic>.from(e)));

@@ -1,9 +1,6 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'pdf_preview_screen.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:file_picker/file_picker.dart';
 
@@ -14,6 +11,8 @@ import '../models/invoice_item.dart';
 import '../providers/app_provider.dart';
 import '../services/pdf_service.dart';
 import '../services/print_service.dart';
+import '../services/feedback_service.dart';
+import '../services/share_util.dart';
 import '../utils/formatters.dart';
 import '../widgets/big_card.dart';
 import '../widgets/quantity_selector.dart';
@@ -25,12 +24,14 @@ class InvoiceScreen extends StatefulWidget {
   final InvoiceKind kind;
   final bool forceCashCustomer;
   final Invoice? existing;
+  final Customer? initialCustomer;
 
   const InvoiceScreen({
     super.key,
     required this.kind,
     this.forceCashCustomer = false,
     this.existing,
+    this.initialCustomer,
   });
 
   @override
@@ -49,6 +50,10 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
   final _discountAmountCtrl = TextEditingController(text: '0');
   final _notesCtrl = TextEditingController();
   String? _signaturePath;
+  // اسم المندوب يُلتقط مرة واحدة فقط عند إنشاء الفاتورة (أو يُحافَظ عليه
+  // كما هو عند تعديل فاتورة قديمة) — لا يتغيّر لاحقًا حتى لو عدّلها مستخدم
+  // آخر، لأنه يمثّل مَن أجرى عملية البيع فعليًا.
+  String _repName = '';
   double _previewBalance = 0;
   bool _saving = false;
 
@@ -71,16 +76,21 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
       _discountAmountCtrl.text = e.discountAmount.toString();
       _notesCtrl.text = e.notes;
       _signaturePath = e.signaturePath;
+      _repName = e.repName;
       _customer = app.customers.firstWhere((c) => c.id == e.customerId,
           orElse: () => Customer(id: e.customerId, name: e.customerName));
     } else {
       _id = _uuid.v4();
       _date = DateTime.now();
+      final currentName = app.currentUser?.displayName.trim() ?? '';
+      _repName = currentName.isNotEmpty ? currentName : app.settings.repName;
       app.peekNextInvoiceNumber(widget.kind).then((n) {
         if (mounted) setState(() => _docNumberCtrl.text = n);
       });
       if (widget.forceCashCustomer) {
         _customer = Customer(id: 'cash_customer', name: 'عميل نقدي');
+      } else if (widget.initialCustomer != null) {
+        _customer = widget.initialCustomer;
       }
     }
     _recalcBalance();
@@ -152,7 +162,17 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
       discountAmount: double.tryParse(_discountAmountCtrl.text) ?? 0,
       notes: _notesCtrl.text.trim(),
       signaturePath: _signaturePath,
+      repName: _repName,
     );
+  }
+
+  @override
+  void dispose() {
+    _docNumberCtrl.dispose();
+    _discountPercentCtrl.dispose();
+    _discountAmountCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
   }
 
   bool _validate() {
@@ -182,6 +202,7 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
       final inv = _buildInvoice();
       await context.read<AppProvider>().saveInvoice(inv);
       if (mounted) {
+        FeedbackService.onSaved(context);
         _snack('تم حفظ الفاتورة بنجاح');
         Navigator.pop(context);
       }
@@ -200,7 +221,8 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
     if (inv == null) return;
     final app = context.read<AppProvider>();
     final bytes = await PdfService.instance.generateInvoicePdf(inv, app.settings);
-    final ok = await PrintService.instance.printPdfBytes(bytes);
+    final ok = await PrintService.instance
+        .printPdfBytes(bytes, printerMac: app.settings.printerAddress);
     _snack(ok ? 'تمت الطباعة' : 'تعذّر الاتصال بالطابعة — تحقق من الإعدادات');
   }
 
@@ -245,11 +267,8 @@ class _InvoiceScreenState extends State<InvoiceScreen> {
     if (inv == null) return;
     final app = context.read<AppProvider>();
     final bytes = await PdfService.instance.generateInvoicePdf(inv, app.settings);
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/فاتورة_${inv.docNumber}.pdf');
-    await file.writeAsBytes(bytes);
-    await SharePlus.instance.share(
-        ShareParams(files: [XFile(file.path)], text: 'فاتورة ${inv.docNumber}'));
+    await ShareUtil.shareBytes(bytes, 'فاتورة_${inv.docNumber}.pdf',
+        text: 'فاتورة ${inv.docNumber}');
   }
 
   @override

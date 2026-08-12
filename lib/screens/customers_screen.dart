@@ -3,11 +3,15 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/customer.dart';
+import '../models/invoice.dart';
 import '../providers/app_provider.dart';
-import '../utils/formatters.dart';
-import 'customer_statement_screen.dart';
+import '../widgets/customer_card.dart';
+import 'customer_detail_screen.dart';
+import 'invoice_screen.dart';
+import 'receipt_screen.dart';
 
-/// إدارة العملاء: إضافة/تعديل/حذف + عرض رصيد كل عميل + دخول لكشف الحساب
+/// إدارة العملاء: إضافة/تعديل/حذف + بطاقة عميل غنية (رصيد، حالة، آخر نشاط،
+/// إجراءات سريعة) + دخول لصفحة العميل الكاملة
 class CustomersScreen extends StatelessWidget {
   const CustomersScreen({super.key});
 
@@ -17,39 +21,55 @@ class CustomersScreen extends StatelessWidget {
     final addressCtrl = TextEditingController(text: existing?.address ?? '');
     final openingCtrl =
         TextEditingController(text: existing?.openingBalance.toString() ?? '0');
+    final creditLimitCtrl =
+        TextEditingController(text: existing?.creditLimit.toString() ?? '0');
+    bool isActive = existing?.isActive ?? true;
 
     final result = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(existing == null ? 'إضافة عميل' : 'تعديل عميل'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(labelText: 'اسم العميل')),
-              TextField(
-                  controller: phoneCtrl,
-                  decoration: const InputDecoration(labelText: 'رقم الهاتف')),
-              TextField(
-                  controller: addressCtrl,
-                  decoration: const InputDecoration(labelText: 'العنوان')),
-              TextField(
-                controller: openingCtrl,
-                keyboardType: TextInputType.number,
-                decoration:
-                    const InputDecoration(labelText: 'الرصيد الافتتاحي'),
-              ),
-            ],
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: Text(existing == null ? 'إضافة عميل' : 'تعديل عميل'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                    controller: nameCtrl,
+                    decoration: const InputDecoration(labelText: 'اسم العميل')),
+                TextField(
+                    controller: phoneCtrl,
+                    decoration: const InputDecoration(labelText: 'رقم الهاتف')),
+                TextField(
+                    controller: addressCtrl,
+                    decoration: const InputDecoration(labelText: 'العنوان')),
+                TextField(
+                  controller: openingCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'الرصيد الافتتاحي'),
+                ),
+                TextField(
+                  controller: creditLimitCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration:
+                      const InputDecoration(labelText: 'الحد الائتماني (اختياري)'),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('عميل نشط'),
+                  value: isActive,
+                  onChanged: (v) => setState(() => isActive = v),
+                ),
+              ],
+            ),
           ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+            FilledButton(
+                onPressed: () => Navigator.pop(ctx, true), child: const Text('حفظ')),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, true), child: const Text('حفظ')),
-        ],
       ),
     );
 
@@ -60,11 +80,30 @@ class CustomersScreen extends StatelessWidget {
         phone: phoneCtrl.text.trim(),
         address: addressCtrl.text.trim(),
         openingBalance: double.tryParse(openingCtrl.text) ?? 0,
+        creditLimit: double.tryParse(creditLimitCtrl.text) ?? 0,
+        isActive: isActive,
+        isPinned: existing?.isPinned ?? false,
+        notes: existing?.notes ?? '',
       );
       if (context.mounted) {
         await context.read<AppProvider>().saveCustomer(c);
       }
     }
+  }
+
+  Future<void> _openInvoice(BuildContext context, Customer c, InvoiceKind kind) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+          builder: (_) => InvoiceScreen(kind: kind, initialCustomer: c)),
+    );
+  }
+
+  Future<void> _openReceipt(BuildContext context, Customer c) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ReceiptScreen(initialCustomer: c)),
+    );
   }
 
   @override
@@ -79,46 +118,21 @@ class CustomersScreen extends StatelessWidget {
       body: app.customers.isEmpty
           ? const Center(child: Text('لا يوجد عملاء بعد — اضغط + للإضافة'))
           : ListView.builder(
+              padding: const EdgeInsets.only(top: 6, bottom: 80),
               itemCount: app.customers.length,
               itemBuilder: (ctx, i) {
                 final c = app.customers[i];
-                return Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  child: ListTile(
-                    leading: const CircleAvatar(child: Icon(Icons.person)),
-                    title: Text(c.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text(c.phone),
-                    trailing: FutureBuilder<double>(
-                      future: app.getCustomerBalance(c.id),
-                      builder: (ctx, snap) => Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            snap.hasData ? Formatters.money(snap.data!) : '...',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: (snap.data ?? 0) > 0 ? Colors.red : Colors.green,
-                            ),
-                          ),
-                          PopupMenuButton<String>(
-                            onSelected: (v) {
-                              if (v == 'edit') _editCustomer(context, c);
-                              if (v == 'delete') app.deleteCustomer(c.id);
-                            },
-                            itemBuilder: (ctx) => const [
-                              PopupMenuItem(value: 'edit', child: Text('تعديل')),
-                              PopupMenuItem(value: 'delete', child: Text('حذف')),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => CustomerStatementScreen(customer: c)),
-                    ),
+                return CustomerCard(
+                  customer: c,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => CustomerDetailScreen(customer: c)),
                   ),
+                  onEdit: () => _editCustomer(context, c),
+                  onDelete: () => app.deleteCustomer(c.id),
+                  onTogglePin: () => app.togglePinCustomer(c.id),
+                  onNewInvoice: () => _openInvoice(context, c, InvoiceKind.sale),
+                  onNewReceipt: () => _openReceipt(context, c),
                 );
               },
             ),

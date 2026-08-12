@@ -7,12 +7,12 @@ class AppTheme {
   static const Color primaryDark = Color(0xFF005662);
   static const Color accent = Color(0xFFFFA000);
 
-  static ThemeData light() {
+  static ThemeData light({Color? seedColor}) {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: primary,
+        seedColor: seedColor ?? primary,
         brightness: Brightness.light,
       ),
       scaffoldBackgroundColor: const Color(0xFFF5F7F8),
@@ -42,12 +42,12 @@ class AppTheme {
     );
   }
 
-  static ThemeData dark() {
+  static ThemeData dark({Color? seedColor}) {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: primary,
+        seedColor: seedColor ?? primary,
         brightness: Brightness.dark,
       ),
       fontFamily: 'Cairo',

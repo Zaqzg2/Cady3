@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 class ColumnConfig {
   String key; // productName / quantity / price / total
   String label;
@@ -26,18 +28,68 @@ class ColumnConfig {
       );
 }
 
+/// وضع المظهر: تلقائي حسب النظام / فاتح دائمًا / داكن دائمًا
+enum AppThemeMode { system, light, dark }
+
+/// صيغة طباعة كشف الحساب الافتراضية
+enum StatementFormat { thermal80, a4 }
+
+/// مدة الخمول قبل قفل التطبيق تلقائيًا
+enum AutoLockOption { immediate, oneMinute, fiveMinutes, never }
+
+/// دورية النسخ الاحتياطي التلقائي
+enum AutoBackupFrequency { off, daily, weekly }
+
+/// وجهة حفظ النسخة الاحتياطية التلقائية
+enum AutoBackupLocation { local, driveShare }
+
+/// ألوان الهوية المتاحة للاختيار من بينها في المظهر
+const List<Color> kBrandColorPalette = [
+  Color(0xFF00838F), // فيروزي (الافتراضي)
+  Color(0xFF2E7D32), // أخضر
+  Color(0xFF1565C0), // أزرق
+  Color(0xFF6A1B9A), // بنفسجي
+  Color(0xFFEF6C00), // برتقالي
+  Color(0xFFC62828), // أحمر
+  Color(0xFF37474F), // رمادي غامق
+];
+
 class CompanySettings {
+  // بيانات الشركة والمندوب
   String companyName;
   String companyPhone;
   String companyAddress;
   String? logoPath;
   String repName;
-  double tableFontSize;
-  double rowSpacing;
+  String repPhone;
+  String? defaultRepSignaturePath; // توقيع افتراضي محفوظ للمندوب
+  String invoiceFooterText; // نص ثابت أسفل كل فاتورة/سند
+
+  // الطباعة والفاتورة
+  double tableFontSize; // حجم خط جدول الأصناف
+  double rowSpacing; // تباعد صفوف الجدول
+  double invoiceBodyFontSize; // حجم خط بقية نص الفاتورة/السند (غير الجدول)
+  double invoiceLineSpacing; // تباعد أسطر الفاتورة/السند كاملة
   List<ColumnConfig> tableColumns;
   String? printerAddress; // عنوان MAC لطابعة البلوتوث المحفوظة
   String? printerName;
-  bool darkMode;
+  StatementFormat defaultStatementFormat;
+
+  // المظهر
+  AppThemeMode themeMode;
+  double appFontScale; // حجم خط واجهة التطبيق (غير خط الفاتورة)
+  bool hapticOnSave;
+  bool soundOnSave;
+  int themeColorValue; // Color.value للون الهوية المختار
+
+  // الخصوصية والأمان
+  AutoLockOption autoLockOption;
+  bool hideAmountsInRecents;
+  int autoLogoutHours; // 0 = تعطيل تسجيل الخروج التلقائي
+
+  // البيانات والنسخ الاحتياطي
+  AutoBackupFrequency autoBackupFrequency;
+  AutoBackupLocation autoBackupLocation;
 
   CompanySettings({
     this.companyName = 'كادي للمنظفات',
@@ -45,13 +97,29 @@ class CompanySettings {
     this.companyAddress = '',
     this.logoPath,
     this.repName = '',
+    this.repPhone = '',
+    this.defaultRepSignaturePath,
+    this.invoiceFooterText = 'شكرًا لتعاملكم معنا',
     this.tableFontSize = 9,
     this.rowSpacing = 4,
+    this.invoiceBodyFontSize = 9,
+    this.invoiceLineSpacing = 1.2,
     List<ColumnConfig>? tableColumns,
     this.printerAddress,
     this.printerName,
-    this.darkMode = false,
-  }) : tableColumns = tableColumns ??
+    this.defaultStatementFormat = StatementFormat.thermal80,
+    this.themeMode = AppThemeMode.system,
+    this.appFontScale = 1.0,
+    this.hapticOnSave = true,
+    this.soundOnSave = false,
+    int? themeColorValue,
+    this.autoLockOption = AutoLockOption.never,
+    this.hideAmountsInRecents = false,
+    this.autoLogoutHours = 0,
+    this.autoBackupFrequency = AutoBackupFrequency.off,
+    this.autoBackupLocation = AutoBackupLocation.local,
+  })  : themeColorValue = themeColorValue ?? kBrandColorPalette.first.value,
+        tableColumns = tableColumns ??
             [
               ColumnConfig(key: 'productName', label: 'الصنف', widthFlex: 3),
               ColumnConfig(key: 'quantity', label: 'الكمية', widthFlex: 1),
@@ -59,18 +127,35 @@ class CompanySettings {
               ColumnConfig(key: 'total', label: 'الإجمالي', widthFlex: 1.4),
             ];
 
+  Color get themeColor => Color(themeColorValue);
+
   Map<String, dynamic> toJson() => {
         'companyName': companyName,
         'companyPhone': companyPhone,
         'companyAddress': companyAddress,
         'logoPath': logoPath,
         'repName': repName,
+        'repPhone': repPhone,
+        'defaultRepSignaturePath': defaultRepSignaturePath,
+        'invoiceFooterText': invoiceFooterText,
         'tableFontSize': tableFontSize,
         'rowSpacing': rowSpacing,
+        'invoiceBodyFontSize': invoiceBodyFontSize,
+        'invoiceLineSpacing': invoiceLineSpacing,
         'tableColumns': tableColumns.map((c) => c.toMap()).toList(),
         'printerAddress': printerAddress,
         'printerName': printerName,
-        'darkMode': darkMode,
+        'defaultStatementFormat': defaultStatementFormat.name,
+        'themeMode': themeMode.name,
+        'appFontScale': appFontScale,
+        'hapticOnSave': hapticOnSave,
+        'soundOnSave': soundOnSave,
+        'themeColorValue': themeColorValue,
+        'autoLockOption': autoLockOption.name,
+        'hideAmountsInRecents': hideAmountsInRecents,
+        'autoLogoutHours': autoLogoutHours,
+        'autoBackupFrequency': autoBackupFrequency.name,
+        'autoBackupLocation': autoBackupLocation.name,
       };
 
   factory CompanySettings.fromJson(Map<String, dynamic> m) => CompanySettings(
@@ -79,14 +164,44 @@ class CompanySettings {
         companyAddress: m['companyAddress'] as String? ?? '',
         logoPath: m['logoPath'] as String?,
         repName: m['repName'] as String? ?? '',
+        repPhone: m['repPhone'] as String? ?? '',
+        defaultRepSignaturePath: m['defaultRepSignaturePath'] as String?,
+        invoiceFooterText: m['invoiceFooterText'] as String? ?? 'شكرًا لتعاملكم معنا',
         tableFontSize: (m['tableFontSize'] as num?)?.toDouble() ?? 9,
         rowSpacing: (m['rowSpacing'] as num?)?.toDouble() ?? 4,
+        invoiceBodyFontSize: (m['invoiceBodyFontSize'] as num?)?.toDouble() ?? 9,
+        invoiceLineSpacing: (m['invoiceLineSpacing'] as num?)?.toDouble() ?? 1.2,
         tableColumns: (m['tableColumns'] as List?)
                 ?.map((e) => ColumnConfig.fromMap(Map<String, dynamic>.from(e)))
                 .toList() ??
             [],
         printerAddress: m['printerAddress'] as String?,
         printerName: m['printerName'] as String?,
-        darkMode: m['darkMode'] as bool? ?? false,
+        defaultStatementFormat: StatementFormat.values.firstWhere(
+            (v) => v.name == m['defaultStatementFormat'],
+            orElse: () => StatementFormat.thermal80),
+        // توافق مع النسخ القديمة التي كانت تخزّن darkMode كـ bool فقط
+        themeMode: m['themeMode'] != null
+            ? AppThemeMode.values.firstWhere((v) => v.name == m['themeMode'],
+                orElse: () => AppThemeMode.system)
+            : ((m['darkMode'] as bool?) == true
+                ? AppThemeMode.dark
+                : AppThemeMode.system),
+        appFontScale: (m['appFontScale'] as num?)?.toDouble() ?? 1.0,
+        hapticOnSave: (m['hapticOnSave'] as bool?) ?? true,
+        soundOnSave: (m['soundOnSave'] as bool?) ?? false,
+        themeColorValue:
+            (m['themeColorValue'] as num?)?.toInt() ?? kBrandColorPalette.first.value,
+        autoLockOption: AutoLockOption.values.firstWhere(
+            (v) => v.name == m['autoLockOption'],
+            orElse: () => AutoLockOption.never),
+        hideAmountsInRecents: (m['hideAmountsInRecents'] as bool?) ?? false,
+        autoLogoutHours: (m['autoLogoutHours'] as num?)?.toInt() ?? 0,
+        autoBackupFrequency: AutoBackupFrequency.values.firstWhere(
+            (v) => v.name == m['autoBackupFrequency'],
+            orElse: () => AutoBackupFrequency.off),
+        autoBackupLocation: AutoBackupLocation.values.firstWhere(
+            (v) => v.name == m['autoBackupLocation'],
+            orElse: () => AutoBackupLocation.local),
       );
 }
