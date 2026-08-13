@@ -3,10 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 
-import 'firebase_options.dart';
 import 'providers/app_provider.dart';
 import 'models/company_settings.dart';
 import 'theme/app_theme.dart';
@@ -48,49 +45,17 @@ Duration? effectiveLockDuration(CompanySettings s) {
   return fromAutoLock < fromLogout ? fromAutoLock : fromLogout;
 }
 
-Future<void> main() async {
+void main() {
   // نلتقط أي خطأ غير متوقّع في أي مكان بالتطبيق (بما فيه أخطاء غير متزامنة)
   // ونطبعه بوضوح في السجل (logcat) بدل ما يختفي بصمت ويترك المستخدم أمام
   // شاشة بيضاء بلا أي تفسير.
-  runZonedGuarded(() async {
+  runZonedGuarded(() {
     WidgetsFlutterBinding.ensureInitialized();
-
-    // تهيئة Firebase (يتطلب تشغيل flutterfire configure أولاً)
-    // إذا كانت القيم ما زالت PLACEHOLDER سيفشل التهيئة — نلتقط الخطأ
-    // ونكمل تشغيل التطبيق بدون Firebase حتى يُكتمل الربط.
-    try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      // Crashlytics غير مدعوم على الويب بنفس الطريقة — نربطه على الموبايل فقط
-      if (!kIsWeb) {
-        FlutterError.onError = (FlutterErrorDetails details) {
-          FlutterError.presentError(details);
-          FirebaseCrashlytics.instance.recordFlutterFatalError(details);
-          debugPrint('FlutterError: ${details.exceptionAsString()}');
-          debugPrint('${details.stack}');
-        };
-        PlatformDispatcher.instance.onError = (error, stack) {
-          FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-          return true;
-        };
-      } else {
-        FlutterError.onError = (FlutterErrorDetails details) {
-          FlutterError.presentError(details);
-          debugPrint('FlutterError: ${details.exceptionAsString()}');
-        };
-      }
-      debugPrint('Firebase initialized successfully');
-    } catch (e, st) {
-      debugPrint('Firebase init skipped (config missing or invalid): $e');
-      debugPrint('$st');
-      FlutterError.onError = (FlutterErrorDetails details) {
-        FlutterError.presentError(details);
-        debugPrint('FlutterError: ${details.exceptionAsString()}');
-        debugPrint('${details.stack}');
-      };
-    }
-
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      debugPrint('FlutterError: ${details.exceptionAsString()}');
+      debugPrint('${details.stack}');
+    };
     // افتراضياً، في نسخة release، أي خطأ أثناء بناء widget يظهر كمربع
     // رمادي فارغ بلا أي رسالة (لإخفاء التفاصيل التقنية عن المستخدم
     // النهائي). نتجاوز هذا مؤقتاً لعرض رسالة الخطأ الحقيقية على الشاشة
@@ -121,11 +86,6 @@ Future<void> main() async {
   }, (error, stack) {
     debugPrint('Uncaught zone error: $error');
     debugPrint('$stack');
-    if (!kIsWeb) {
-      try {
-        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-      } catch (_) {}
-    }
   });
 }
 

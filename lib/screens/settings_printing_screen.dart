@@ -21,6 +21,7 @@ class _SettingsPrintingScreenState extends State<SettingsPrintingScreen> {
   double _rowSpacing = 4;
   double _bodyFontSize = 9;
   double _lineSpacing = 1.2;
+  double _blackThreshold = 175;
   StatementFormat _statementFormat = StatementFormat.thermal80;
   List<PrinterDevice> _pairedDevices = [];
   String? _selectedPrinterMac;
@@ -35,6 +36,7 @@ class _SettingsPrintingScreenState extends State<SettingsPrintingScreen> {
     _rowSpacing = s.rowSpacing;
     _bodyFontSize = s.invoiceBodyFontSize;
     _lineSpacing = s.invoiceLineSpacing;
+    _blackThreshold = s.printBlackThreshold.toDouble();
     _statementFormat = s.defaultStatementFormat;
     _selectedPrinterMac = s.printerAddress;
     _loadPairedDevices();
@@ -62,10 +64,11 @@ class _SettingsPrintingScreenState extends State<SettingsPrintingScreen> {
       if (mounted) setState(() => _liveConnected = false);
       return;
     }
-    var live = await PrintService.instance.isConnected;
-    if (!live) {
-      live = await PrintService.instance.connect(_selectedPrinterMac!);
-    }
+    // تحقّق حقيقي (كتابة فعلية على المقبس) بدل الاكتفاء بـ isConnected —
+    // نفس آلية التحقق المستخدمة عند الطباعة الفعلية بالضبط (راجع
+    // _writeVerified في print_service_io.dart)، حتى لا تعرض هذه الشاشة
+    // "متصلة" بينما الطباعة الفعلية تفشل.
+    final live = await PrintService.instance.verifyConnection(_selectedPrinterMac);
     if (mounted) setState(() => _liveConnected = live);
   }
 
@@ -73,22 +76,47 @@ class _SettingsPrintingScreenState extends State<SettingsPrintingScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
 
   Future<void> _connectPrinter(PrinterDevice device) async {
-    final ok = await PrintService.instance.connect(device.macAddress);
+    // نحفظ عنوان الطابعة إن نجحت المصافحة الأساسية connect() فقط — لا نشترط
+    // نجاح verifyConnection (اختبار كتابة فعلي) للحفظ، لأن كل منطق إعادة
+    // المحاولة بباقي التطبيق (printPdfBytes) يعتمد على وجود printerAddress
+    // محفوظ ليستخدمه عند إعادة الاتصال. لو اشترطنا نجاح الكتابة قبل الحفظ،
+    // وفشلت الكتابة دائمًا لأي سبب (كما حدث هنا)، لن يُحفَظ العنوان أبدًا —
+    // فتفقد كل شاشات الطباعة القدرة حتى على المحاولة، ويتفاقم العطل بدل أن
+    // يُشخَّص.
+    final connected = await PrintService.instance.connect(device.macAddress);
     if (!mounted) return;
-    if (ok) {
-      final app = context.read<AppProvider>();
-      final s = app.settings;
-      s.printerAddress = device.macAddress;
-      s.printerName = device.name;
-      await app.saveSettings(s);
-      if (!mounted) return;
-      setState(() {
-        _selectedPrinterMac = device.macAddress;
-        _liveConnected = true;
-      });
+    if (!connected) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('تعذّر الاتصال بالطابعة'),
+        duration: const Duration(seconds: 6),
+        action: SnackBarAction(
+            label: 'التفاصيل', onPressed: () => showPrintDiagnosticsDialog(context)),
+      ));
+      return;
+    }
+
+    final app = context.read<AppProvider>();
+    final s = app.settings;
+    s.printerAddress = device.macAddress;
+    s.printerName = device.name;
+    await app.saveSettings(s);
+    if (!mounted) return;
+    setState(() => _selectedPrinterMac = device.macAddress);
+
+    // الآن —وبعد الحفظ— نتحقق فعليًا بكتابة حقيقية لعرض حالة دقيقة، دون أن
+    // يمنع فشلها حفظ العنوان الذي حصل للتو.
+    final verified = await PrintService.instance.verifyConnection(device.macAddress);
+    if (!mounted) return;
+    setState(() => _liveConnected = verified);
+    if (verified) {
       _snack('تم الاتصال بالطابعة ${device.name}');
     } else {
-      _snack('تعذّر الاتصال بالطابعة');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('اتصل الجهاز، لكن فشل اختبار كتابة فعلي — الطباعة الحقيقية ستفشل غالبًا'),
+        duration: const Duration(seconds: 6),
+        action: SnackBarAction(
+            label: 'التفاصيل', onPressed: () => showPrintDiagnosticsDialog(context)),
+      ));
     }
   }
 
@@ -113,6 +141,7 @@ class _SettingsPrintingScreenState extends State<SettingsPrintingScreen> {
     s.rowSpacing = _rowSpacing;
     s.invoiceBodyFontSize = _bodyFontSize;
     s.invoiceLineSpacing = _lineSpacing;
+    s.printBlackThreshold = _blackThreshold.round();
     s.defaultStatementFormat = _statementFormat;
     await app.saveSettings(s);
     if (mounted) _snack('تم حفظ إعدادات الطباعة');
@@ -233,6 +262,22 @@ class _SettingsPrintingScreenState extends State<SettingsPrintingScreen> {
                     groupValue: _selectedPrinterMac,
                     onChanged: (_) => _connectPrinter(d),
                   )),
+            const SizedBox(height: 4),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('اطبع عبر تطبيق آخر بدل الاتصال المباشر'),
+              subtitle: const Text(
+                  'يتخطى الاتصال المباشر بالبلوتوث ويفتح حوار طباعة النظام مباشرة '
+                  '(اختر منه أي تطبيق مثبَّت مثل RawBT). فعّله إن كان جهازك لا '
+                  'يطبع مباشرة رغم ظهوره "متصلة".',
+                  style: TextStyle(fontSize: 12)),
+              value: app.settings.preferSystemPrintDialog,
+              onChanged: (v) async {
+                final s = app.settings;
+                s.preferSystemPrintDialog = v;
+                await app.saveSettings(s);
+              },
+            ),
           ],
           const Divider(height: 32),
 
@@ -283,6 +328,20 @@ class _SettingsPrintingScreenState extends State<SettingsPrintingScreen> {
             label: '${_lineSpacing.toStringAsFixed(1)}x',
             onChanged: (v) => setState(() => _lineSpacing = v),
           ),
+          Text('كثافة/غمقان النص المطبوع: ${_blackThreshold.toStringAsFixed(0)}'
+              '${_blackThreshold >= 200 ? '  (غامق جدًا)' : _blackThreshold <= 140 ? '  (فاتح)' : ''}'),
+          Slider(
+            value: _blackThreshold,
+            min: 120,
+            max: 210,
+            divisions: 18,
+            label: _blackThreshold.toStringAsFixed(0),
+            onChanged: (v) => setState(() => _blackThreshold = v),
+          ),
+          const Text(
+              'ارفعها إن كان النص يطبع باهتًا/رماديًا، خفّضها إن كان غامقًا جدًا '
+              'أو خطوط الجدول أصبحت سميكة أكثر من اللازم.',
+              style: TextStyle(fontSize: 12, color: Colors.grey)),
           const Divider(height: 32),
 
           const Text('صيغة طباعة كشف الحساب الافتراضية',

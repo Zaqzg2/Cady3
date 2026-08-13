@@ -44,8 +44,6 @@ dependencies:
   share_plus: ^12.0.2
 
   # طباعة حرارية 80مم عبر بلوتوث (ESC/POS)
-  esc_pos_utils_plus: ^2.0.4
-  print_bluetooth_thermal: ^1.1.4
   permission_handler: ^11.3.1
   image: ^4.2.0
 
@@ -63,15 +61,6 @@ dependencies:
 
   # اتصال هاتفي / فتح واتساب / فتح الموقع على الخريطة من بطاقة العميل
   url_launcher: ^6.3.1
-
-  # Firebase — Core + Crashlytics + Analytics + Firestore (مزامنة سحابية)
-  firebase_core: ^3.8.1
-  firebase_crashlytics: ^4.2.0
-  firebase_analytics: ^11.4.0
-  cloud_firestore: ^5.5.1
-  # اختياري لاحقاً:
-  # firebase_auth: ^5.3.4
-  # firebase_storage: ^12.3.7
 
 dev_dependencies:
   flutter_test:

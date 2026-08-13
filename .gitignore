@@ -31,8 +31,3 @@ ios/Flutter/Flutter.podspec
 
 # نسخ احتياطية مصدَّرة محليًا (لا يجب رفعها للمستودع)
 *نسخة_احتياطية*.json
-
-# Firebase
-.firebase/
-firebase-debug.log
-ui-debug.log

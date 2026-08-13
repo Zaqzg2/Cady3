@@ -182,9 +182,11 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
     if (r == null) return;
     final app = context.read<AppProvider>();
     final bytes = await PdfService.instance.generateReceiptPdf(r, app.settings);
-    final ok = await PrintService.instance
-        .printPdfBytes(bytes, printerMac: app.settings.printerAddress);
-    _snack(ok ? 'تمت الطباعة' : 'تعذّر الاتصال بالطابعة — تحقق من الإعدادات');
+    if (!mounted) return;
+    await printDocument(context, bytes,
+        printerMac: app.settings.printerAddress,
+        preferSystem: app.settings.preferSystemPrintDialog,
+        blackThreshold: app.settings.printBlackThreshold);
   }
 
   Future<void> _downloadPdf() async {

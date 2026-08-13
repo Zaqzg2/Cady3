@@ -79,7 +79,7 @@ class PdfService {
               style: pw.TextStyle(font: _arabicFont, fontSize: 8 * scale),
               textDirection: pw.TextDirection.rtl),
         pw.Padding(
-          padding: const pw.EdgeInsets.symmetric(vertical: 5),
+          padding: pw.EdgeInsets.symmetric(vertical: 5 * s.invoiceLineSpacing),
           child: pw.Divider(thickness: 0.7),
         ),
         pw.Text(
@@ -90,6 +90,16 @@ class PdfService {
       ],
     );
   }
+
+  /// فراغ رأسي يتناسب مع "تباعد أسطر الفاتورة" من شاشة الإعدادات — يُستخدم
+  /// بين أقسام الفاتورة/السند (بعد الترويسة، قبل/بعد الملاحظات، قبل التوقيع
+  /// والتذييل). قبل هذا التعديل كانت هذه الفراغات قيمًا ثابتة (SizedBox)
+  /// لا تتغيّر أبدًا عند تحريك شريط "تباعد الأسطر"، بعكس صفوف _kv التي كانت
+  /// تستجيب له فعلاً — لذلك كان تصغير الشريط يبدو بلا أثر يُذكر على شكل
+  /// الفاتورة الكامل رغم عمله جزئيًا. الجدول (pw.Table) لا علاقة له بهذا
+  /// المتغيّر أصلاً؛ تباعده الخاص يأتي من settings.rowSpacing وحده.
+  pw.Widget _gap(CompanySettings s, double base) =>
+      pw.SizedBox(height: base * s.invoiceLineSpacing);
 
   pw.Widget _kv(String k, String v, CompanySettings s, {double? fontSize}) {
     return pw.Padding(
@@ -135,7 +145,7 @@ class PdfService {
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
               _header(settings, docTitle: title, logoBytes: logoBytes),
-              pw.SizedBox(height: 4),
+              _gap(settings, 4),
               _kv('رقم الفاتورة', inv.docNumber, settings),
               _kv('التاريخ', df.format(inv.date), settings),
               _kv('العميل', inv.customerName, settings),
@@ -202,7 +212,7 @@ class PdfService {
                     ),
                 ],
               ),
-              pw.SizedBox(height: 4),
+              _gap(settings, 4),
               pw.Divider(thickness: 0.5),
               _kv('الإجمالي الفرعي', _currency.format(inv.subTotal), settings),
               if (inv.discountValue > 0)
@@ -213,18 +223,24 @@ class PdfService {
               _kv('رصيد العميل بعد الفاتورة',
                   _currency.format(inv.balanceAfter), settings),
               if (inv.notes.isNotEmpty) ...[
-                pw.SizedBox(height: 4),
+                _gap(settings, 4),
                 pw.Text('ملاحظات:',
-                    style: pw.TextStyle(font: _arabicFontBold, fontSize: 9),
+                    style: pw.TextStyle(
+                        font: _arabicFontBold,
+                        fontSize: 9 * (settings.invoiceBodyFontSize / 9.0)),
                     textDirection: pw.TextDirection.rtl),
                 pw.Text(inv.notes,
-                    style: pw.TextStyle(font: _arabicFont, fontSize: 8),
+                    style: pw.TextStyle(
+                        font: _arabicFont,
+                        fontSize: 8 * (settings.invoiceBodyFontSize / 9.0)),
                     textDirection: pw.TextDirection.rtl),
               ],
               if (signatureBytes != null) ...[
-                pw.SizedBox(height: 8),
+                _gap(settings, 8),
                 pw.Text('توقيع العميل:',
-                    style: pw.TextStyle(font: _arabicFont, fontSize: 8),
+                    style: pw.TextStyle(
+                        font: _arabicFont,
+                        fontSize: 8 * (settings.invoiceBodyFontSize / 9.0)),
                     textDirection: pw.TextDirection.rtl),
                 pw.Container(
                   height: 60,
@@ -232,7 +248,7 @@ class PdfService {
                   child: pw.Image(pw.MemoryImage(signatureBytes)),
                 ),
               ],
-              pw.SizedBox(height: 6),
+              _gap(settings, 6),
               pw.Center(
                 child: pw.Text(settings.invoiceFooterText,
                     style: pw.TextStyle(
@@ -264,7 +280,7 @@ class PdfService {
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
               _header(settings, docTitle: 'سند قبض', logoBytes: logoBytes),
-              pw.SizedBox(height: 4),
+              _gap(settings, 4),
               _kv('رقم السند', r.docNumber, settings),
               _kv('التاريخ', df.format(r.date), settings),
               _kv('العميل', r.customerName, settings),
@@ -278,15 +294,19 @@ class PdfService {
               pw.Divider(thickness: 0.5),
               _kv('رصيد العميل بعد السند', _currency.format(r.balanceAfter), settings),
               if (r.notes.isNotEmpty) ...[
-                pw.SizedBox(height: 4),
+                _gap(settings, 4),
                 pw.Text(r.notes,
-                    style: pw.TextStyle(font: _arabicFont, fontSize: 8),
+                    style: pw.TextStyle(
+                        font: _arabicFont,
+                        fontSize: 8 * (settings.invoiceBodyFontSize / 9.0)),
                     textDirection: pw.TextDirection.rtl),
               ],
               if (signatureBytes != null) ...[
-                pw.SizedBox(height: 8),
+                _gap(settings, 8),
                 pw.Text('توقيع المندوب:',
-                    style: pw.TextStyle(font: _arabicFont, fontSize: 8),
+                    style: pw.TextStyle(
+                        font: _arabicFont,
+                        fontSize: 8 * (settings.invoiceBodyFontSize / 9.0)),
                     textDirection: pw.TextDirection.rtl),
                 pw.Container(
                   height: 60,
@@ -294,7 +314,7 @@ class PdfService {
                   child: pw.Image(pw.MemoryImage(signatureBytes)),
                 ),
               ],
-              pw.SizedBox(height: 6),
+              _gap(settings, 6),
               pw.Center(
                 child: pw.Text(settings.invoiceFooterText,
                     style: pw.TextStyle(
@@ -427,9 +447,9 @@ class PdfService {
             children: [
               _header(settings,
                   docTitle: 'كشف حساب: $customerName', logoBytes: logoBytes),
-              pw.SizedBox(height: 8),
+              _gap(settings, 8),
               buildTable(),
-              pw.SizedBox(height: 12),
+              _gap(settings, 12),
               if (summary != null) summary,
             ],
           ),
@@ -447,12 +467,12 @@ class PdfService {
             children: [
               _header(settings,
                   docTitle: 'كشف حساب: $customerName', logoBytes: logoBytes),
-              pw.SizedBox(height: 8),
+              _gap(settings, 8),
             ],
           ),
           build: (context) => [
             buildTable(),
-            pw.SizedBox(height: 12),
+            _gap(settings, 12),
             if (summary != null) summary,
           ],
         ),

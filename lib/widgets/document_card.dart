@@ -77,19 +77,22 @@ class DocumentCard extends StatelessWidget {
   Future<void> _print(BuildContext context) async {
     final bytes = await _pdfBytes(context);
     if (!context.mounted) return;
-    final mac = context.read<AppProvider>().settings.printerAddress;
-    final ok = await PrintService.instance.printPdfBytes(bytes, printerMac: mac);
-    if (!context.mounted) return;
-    _snack(context, ok ? 'تمت الطباعة' : 'تعذّر الاتصال بالطابعة');
-    if (ok) {
-      final app = context.read<AppProvider>();
-      if (row.invoice != null) {
-        await app.markInvoicePrinted(row.id);
-      } else {
-        await app.markReceiptPrinted(row.id);
-      }
-      onChanged();
-    }
+    final app = context.read<AppProvider>();
+    await printDocument(
+      context,
+      bytes,
+      printerMac: app.settings.printerAddress,
+      preferSystem: app.settings.preferSystemPrintDialog,
+      blackThreshold: app.settings.printBlackThreshold,
+      onPrinted: () async {
+        if (row.invoice != null) {
+          await app.markInvoicePrinted(row.id);
+        } else {
+          await app.markReceiptPrinted(row.id);
+        }
+        onChanged();
+      },
+    );
   }
 
   Future<void> _share(BuildContext context) async {

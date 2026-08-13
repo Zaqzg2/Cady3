@@ -11,6 +11,12 @@ class PrintService {
   PrintService._();
   static final PrintService instance = PrintService._();
 
+  // موجودة فقط لمطابقة شكل الواجهة مع print_service_io.dart (راجع
+  // print_service.dart الذي يستخدمها بغض النظر عن المنصة) — لا معنى لها
+  // فعليًا على الويب لأن الطباعة هنا تمر بحوار المتصفح الأصلي دائمًا.
+  final List<String> lastAttemptLog = [];
+  String? lastError;
+
   Future<List<PrinterDevice>> getPairedDevices() async => const [];
 
   Future<bool> connect(String macAddress) async => false;
@@ -19,7 +25,14 @@ class PrintService {
 
   Future<void> disconnect() async {}
 
-  Future<bool> printPdfBytes(Uint8List pdfBytes, {String? printerMac}) async {
+  Future<bool> verifyConnection(String? printerMac) async => false;
+
+  Future<bool> printPdfBytes(Uint8List pdfBytes,
+      {String? printerMac, int blackThreshold = 175}) async {
+    return Printing.layoutPdf(onLayout: (format) async => pdfBytes);
+  }
+
+  Future<bool> printViaSystemDialog(Uint8List pdfBytes) async {
     return Printing.layoutPdf(onLayout: (format) async => pdfBytes);
   }
 }

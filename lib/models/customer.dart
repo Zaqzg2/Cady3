@@ -47,12 +47,8 @@ class Customer {
         phone: m['phone'] as String? ?? '',
         address: m['address'] as String? ?? '',
         openingBalance: (m['openingBalance'] as num?)?.toDouble() ?? 0,
-        isPinned: m['isPinned'] is bool
-            ? m['isPinned'] as bool
-            : ((m['isPinned'] as num?) ?? 0) != 0,
-        isActive: m['isActive'] is bool
-            ? m['isActive'] as bool
-            : ((m['isActive'] as num?) ?? 1) != 0,
+        isPinned: ((m['isPinned'] as num?) ?? 0) != 0,
+        isActive: ((m['isActive'] as num?) ?? 1) != 0,
         creditLimit: (m['creditLimit'] as num?)?.toDouble() ?? 0,
         notes: m['notes'] as String? ?? '',
         // migration آمن: سجل قديم بلا هذا الحقل يُعتبر "متزامن" افتراضيًا
@@ -61,19 +57,9 @@ class Customer {
             ? SyncStatus.values.firstWhere((s) => s.name == m['syncStatus'],
                 orElse: () => SyncStatus.synced)
             : SyncStatus.synced,
-        updatedAt: _parseDate(m['updatedAt']),
+        updatedAt: m['updatedAt'] != null
+            ? DateTime.parse(m['updatedAt'] as String)
+            : DateTime.now(),
       );
-
-  static DateTime _parseDate(dynamic v) {
-    if (v == null) return DateTime.now();
-    if (v is DateTime) return v;
-    if (v is String) return DateTime.tryParse(v) ?? DateTime.now();
-    // Firestore Timestamp (له toDate)
-    try {
-      return (v as dynamic).toDate() as DateTime;
-    } catch (_) {
-      return DateTime.now();
-    }
-  }
 }
 
