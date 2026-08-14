@@ -1,0 +1,65 @@
+name: نشر نسخة الويب على Firebase Hosting
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: استنساخ المستودع
+        uses: actions/checkout@v4
+
+      - name: تجهيز Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: عرض إصدار Flutter
+        run: flutter --version
+
+      # يولّد مجلد web/ تلقائيًا فقط إن لم يكن موجودًا في المستودع بعد —
+      # نفس منطق توليد android/ في workflow بناء APK بالضبط (لا توجد بيئة
+      # Flutter محلية لتوليده يدويًا). يسبق flutter pub get لنفس السبب:
+      # تسجيل الإضافات الصحيح لمنصة الويب في .flutter-plugins-dependencies.
+      - name: توليد مجلد web إن لم يكن موجودًا
+        run: |
+          if [ ! -d "web" ]; then
+            echo "لا يوجد مجلد web — يتم توليده الآن عبر flutter create"
+            flutter create --platforms=web --org com.cady --project-name cadysalesapp /tmp/scaffold_web
+            cp -r /tmp/scaffold_web/web ./web
+          else
+            echo "مجلد web موجود مسبقًا في المستودع — سيُستخدم كما هو"
+          fi
+
+      - name: تنزيل حزم Dart/Flutter
+        run: flutter pub get
+
+      - name: بناء نسخة الويب (release)
+        run: flutter build web --release --no-pub
+
+      - name: رفع سجلات الفشل عند الخطأ (للتشخيص)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-build-failure-logs
+          path: |
+            build/reports/**
+          if-no-files-found: ignore
+
+      - name: النشر على Firebase Hosting
+        if: success()
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
+          projectId: cady-34220
+          channelId: live

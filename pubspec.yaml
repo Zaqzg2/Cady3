@@ -24,6 +24,14 @@ dependencies:
   # (nosql سريعة وخفيفة، تعمل على الجوال والويب معًا عبر IndexedDB)
   hive_ce_flutter: ^2.3.4
 
+  # Firebase: ربط سحابي (Cloud Firestore للمزامنة الحيّة، Auth لحسابات
+  # المندوبين/المدير، Core أساس لازم للاثنين). التهيئة يدوية عبر
+  # firebase_options.dart بقيم صريحة (بدون google-services.json وبدون
+  # لمس Gradle) لأن مجلد android يتولّد من الصفر كل تشغيلة CI
+  firebase_core: ^4.6.0
+  cloud_firestore: ^6.2.0
+  firebase_auth: ^6.3.0
+
   # التنسيقات (تاريخ / عملة ريال يمني)
   intl: ^0.20.2
 

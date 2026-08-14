@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
+import 'firebase_options.dart';
 import 'providers/app_provider.dart';
 import 'models/company_settings.dart';
 import 'theme/app_theme.dart';
@@ -49,7 +51,7 @@ void main() {
   // نلتقط أي خطأ غير متوقّع في أي مكان بالتطبيق (بما فيه أخطاء غير متزامنة)
   // ونطبعه بوضوح في السجل (logcat) بدل ما يختفي بصمت ويترك المستخدم أمام
   // شاشة بيضاء بلا أي تفسير.
-  runZonedGuarded(() {
+  runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
     FlutterError.onError = (FlutterErrorDetails details) {
       FlutterError.presentError(details);
@@ -82,7 +84,21 @@ void main() {
         ),
       );
     };
-    runApp(const CadySalesApp());
+    // تهيئة Firebase — مرحلة التحقّق الأولى من الربط. لو فشلت (شبكة غير
+    // متاحة، إعدادات خاطئة...) التطبيق يكمل عادي على البيانات المحلية
+    // بدل ما يتعطّل بالكامل، ويظهر شريط تشخيصي بسيط أعلى الشاشة بالحالة
+    // (هذا الشريط مؤقت لمرحلة الربط فقط، يُحذف بعد التأكد من نجاحه).
+    String? firebaseInitError;
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    } catch (e) {
+      firebaseInitError = 'فشل الاتصال بـ Firebase: $e';
+      debugPrint(firebaseInitError);
+    }
+
+    runApp(CadySalesApp(firebaseInitError: firebaseInitError));
   }, (error, stack) {
     debugPrint('Uncaught zone error: $error');
     debugPrint('$stack');
@@ -90,7 +106,8 @@ void main() {
 }
 
 class CadySalesApp extends StatelessWidget {
-  const CadySalesApp({super.key});
+  final String? firebaseInitError;
+  const CadySalesApp({super.key, this.firebaseInitError});
 
   @override
   Widget build(BuildContext context) {
@@ -120,7 +137,12 @@ class CadySalesApp extends StatelessWidget {
               child: MediaQuery(
                 data: MediaQuery.of(context)
                     .copyWith(textScaler: TextScaler.linear(app.settings.appFontScale)),
-                child: child!,
+                child: Stack(
+                  children: [
+                    child!,
+                    _FirebaseStatusBanner(error: firebaseInitError),
+                  ],
+                ),
               ),
             ),
             home: app.loading
@@ -163,6 +185,63 @@ class CadySalesApp extends StatelessWidget {
                             : const AppGate(),
           );
         },
+      ),
+    );
+  }
+}
+
+/// شريط تشخيصي مؤقت أعلى الشاشة يؤكد بصريًا نجاح/فشل الاتصال بـ Firebase
+/// عند إقلاع التطبيق — بديل عن قراءة سجلات الجهاز (logcat) غير المتاحة
+/// بدون كمبيوتر. اضغط عليه لإخفائه. يُحذف من الكود بعد التأكد من نجاح
+/// الربط والانتقال لاستخدام Firestore/Auth فعليًا.
+class _FirebaseStatusBanner extends StatefulWidget {
+  final String? error;
+  const _FirebaseStatusBanner({required this.error});
+
+  @override
+  State<_FirebaseStatusBanner> createState() => _FirebaseStatusBannerState();
+}
+
+class _FirebaseStatusBannerState extends State<_FirebaseStatusBanner> {
+  bool _dismissed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_dismissed) return const SizedBox.shrink();
+    final hasError = widget.error != null;
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        bottom: false,
+        child: Material(
+          color: hasError ? Colors.red.shade700 : Colors.green.shade700,
+          child: InkWell(
+            onTap: () => setState(() => _dismissed = true),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    hasError ? Icons.cloud_off : Icons.cloud_done,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      hasError ? widget.error! : 'متصل بـ Firebase ✓ (اضغط لإخفاء)',
+                      style: const TextStyle(color: Colors.white, fontSize: 11),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
