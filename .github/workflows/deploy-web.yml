@@ -63,3 +63,19 @@ jobs:
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}'
           projectId: cady-34220
           channelId: live
+
+      # نشر Hosting أعلاه لا يلمس قواعد حماية Firestore — تُنشر هنا
+      # منفصلة عبر Firebase CLI بنفس مفتاح حساب الخدمة، حتى تنعكس أي
+      # تعديلات على firestore.rules فعليًا على القاعدة الحيّة مع كل رفع.
+      - name: نشر قواعد حماية Firestore
+        if: success()
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$FIREBASE_SA" > /tmp/firebase-sa.json
+          export GOOGLE_APPLICATION_CREDENTIALS=/tmp/firebase-sa.json
+          npx --yes firebase-tools@latest deploy \
+            --only firestore:rules \
+            --project cady-34220 \
+            --non-interactive
+          rm -f /tmp/firebase-sa.json

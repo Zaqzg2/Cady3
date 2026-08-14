@@ -105,7 +105,7 @@ class _SetupManagerScreenState extends State<SetupManagerScreen> {
                         labelText: 'كلمة المرور',
                         border: OutlineInputBorder()),
                     validator: (v) =>
-                        (v == null || v.length < 4) ? '٤ أحرف على الأقل' : null,
+                        (v == null || v.length < 6) ? '٦ أحرف على الأقل' : null,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(

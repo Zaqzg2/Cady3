@@ -162,9 +162,9 @@ class _UserFormSheetState extends State<_UserFormSheet> {
           await app.setUserPassword(u, _passCtrl.text);
         }
       } else {
-        if (_passCtrl.text.length < 4) {
+        if (_passCtrl.text.length < 6) {
           setState(() {
-            _error = '٤ أحرف على الأقل لكلمة المرور';
+            _error = '٦ أحرف على الأقل لكلمة المرور';
             _saving = false;
           });
           return;
