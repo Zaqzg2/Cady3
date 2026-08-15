@@ -25,6 +25,9 @@ class Invoice {
   DateTime createdAt;
   SyncStatus syncStatus;
   DateTime updatedAt;
+  // معرّف المستخدم (Firebase UID) اللي أنشأ الفاتورة — تحدّده db_service
+  // تلقائيًا عند أول حفظ فقط ولا تغيّره بعد ذلك (راجع upsertInvoice)
+  String ownerUid;
 
   Invoice({
     required this.id,
@@ -47,6 +50,7 @@ class Invoice {
     DateTime? createdAt,
     this.syncStatus = SyncStatus.pending,
     DateTime? updatedAt,
+    this.ownerUid = '',
   })  : createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now();
 
@@ -86,6 +90,7 @@ class Invoice {
         'createdAt': createdAt.toIso8601String(),
         'syncStatus': syncStatus.name,
         'updatedAt': updatedAt.toIso8601String(),
+        'ownerUid': ownerUid,
       };
 
   factory Invoice.fromMap(Map<String, dynamic> m) => Invoice(
@@ -117,6 +122,7 @@ class Invoice {
         updatedAt: m['updatedAt'] != null
             ? DateTime.parse(m['updatedAt'] as String)
             : DateTime.now(),
+        ownerUid: m['ownerUid'] as String? ?? '',
       );
 }
 

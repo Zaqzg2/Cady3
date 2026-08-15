@@ -12,6 +12,9 @@ class Customer {
   String notes; // ملاحظات داخلية عن العميل
   SyncStatus syncStatus;
   DateTime updatedAt;
+  // معرّف المستخدم (Firebase UID) اللي أنشأ العميل — تحدّده db_service
+  // تلقائيًا عند أول حفظ فقط ولا تغيّره بعد ذلك (راجع upsertCustomer)
+  String ownerUid;
 
   Customer({
     required this.id,
@@ -25,6 +28,7 @@ class Customer {
     this.notes = '',
     this.syncStatus = SyncStatus.pending,
     DateTime? updatedAt,
+    this.ownerUid = '',
   }) : updatedAt = updatedAt ?? DateTime.now();
 
   Map<String, dynamic> toMap() => {
@@ -39,6 +43,7 @@ class Customer {
         'notes': notes,
         'syncStatus': syncStatus.name,
         'updatedAt': updatedAt.toIso8601String(),
+        'ownerUid': ownerUid,
       };
 
   factory Customer.fromMap(Map<String, dynamic> m) => Customer(
@@ -60,6 +65,7 @@ class Customer {
         updatedAt: m['updatedAt'] != null
             ? DateTime.parse(m['updatedAt'] as String)
             : DateTime.now(),
+        ownerUid: m['ownerUid'] as String? ?? '',
       );
 }
 

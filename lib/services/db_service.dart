@@ -1,3 +1,7 @@
+import 'dart:async';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 
 import '../models/customer.dart';
@@ -8,11 +12,17 @@ import '../models/user_account.dart';
 import '../models/sync_log_entry.dart';
 import '../models/export_log_entry.dart';
 
-/// طبقة الوصول لقاعدة بيانات التطبيق — Hive بالكامل (nosql محلي سريع
-/// يعمل بنفس الطريقة على الجوال والويب عبر IndexedDB). كل سجل يُخزَّن
-/// كـ Map بنفس صيغة toMap()/fromMap() الموجودة أصلاً بكل موديل، بالمفتاح
-/// id — بدون أي TypeAdapter لأن كل القيم أصلاً أنواع أساسية
-/// (String/num/bool/List/Map) يدعمها Hive مباشرة.
+/// طبقة الوصول لقاعدة بيانات التطبيق — Hive محليًا (المصدر الأساسي،
+/// يعمل دائمًا حتى بدون إنترنت) + مزامنة أفضل-جهد مع Cloud Firestore
+/// بالخلفية (best-effort, fire-and-forget) للعملاء/المنتجات/الفواتير/
+/// السندات. الحفظ المحلي لا ينتظر نجاح الشبكة أبدًا — مهم لمندوب ميداني
+/// قد يعمل بلا تغطية لفترات طويلة؛ أي فشل مزامنة سحابية يُسجَّل بس بدون
+/// ما يوقف أو يبطّئ الحفظ المحلي.
+///
+/// كل سجل عميل/فاتورة/سند يُنسب لأول من أنشأه (ownerUid = Firebase UID)
+/// ولا يتغيّر بعدها حتى لو عدّله شخص ثاني (مدير مثلًا) — هذا يطابق
+/// قواعد حماية Firestore (firestore.rules) اللي تحصر كل مندوب ببياناته
+/// هو فقط، والمدير يشوف الكل.
 class DbService {
   DbService._();
   static final DbService instance = DbService._();
@@ -55,15 +65,72 @@ class DbService {
   Map<String, dynamic> _asStringMap(dynamic raw) =>
       Map<String, dynamic>.from(raw as Map);
 
+  // ---------------- مزامنة Firestore (أفضل-جهد، بالخلفية) ----------------
+
+  /// يجلب معرّف المستخدم الحالي على Firebase بأمان — يرجع null بدل ما
+  /// يرمي استثناءً لو Firebase أصلًا فشلت تهيئته (راجع البانر بـ
+  /// main.dart) حتى لا يتعطّل الحفظ المحلي بسبب هذا وحده.
+  String? _currentUid() {
+    try {
+      return FirebaseAuth.instance.currentUser?.uid;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// يكتب مستند على Firestore بدون انتظار (fire-and-forget) — أي خطأ
+  /// (لا إنترنت، لا صلاحية، أو حتى Firebase نفسها فشلت تهيئتها) يُسجَّل
+  /// فقط ولا يصل للمستدعي أبدًا، حتى لا يتعطّل أو يتبطّأ أي حفظ محلي.
+  void _syncSet(String collection, String id, Map<String, dynamic> data) {
+    try {
+      unawaited(
+        FirebaseFirestore.instance.collection(collection).doc(id).set(data).catchError(
+          (e) {
+            // ignore: avoid_print
+            print('تنبيه: تعذّرت مزامنة $collection/$id مع Firestore: $e');
+          },
+        ),
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('تنبيه: تعذّرت مزامنة $collection/$id مع Firestore: $e');
+    }
+  }
+
+  void _syncDelete(String collection, String id) {
+    try {
+      unawaited(
+        FirebaseFirestore.instance.collection(collection).doc(id).delete().catchError(
+          (e) {
+            // ignore: avoid_print
+            print('تنبيه: تعذّر حذف $collection/$id من Firestore: $e');
+          },
+        ),
+      );
+    } catch (e) {
+      // ignore: avoid_print
+      print('تنبيه: تعذّر حذف $collection/$id من Firestore: $e');
+    }
+  }
+
   // ---------------- العملاء ----------------
   Future<void> upsertCustomer(Customer c) async {
     await _ensureReady();
+    final existingRaw = _customersBox.get(c.id);
+    if (existingRaw != null) {
+      // سجل موجود: يبقى منسوبًا لأول من أنشأه دائمًا مهما عدّله لاحقًا
+      c.ownerUid = Customer.fromMap(_asStringMap(existingRaw)).ownerUid;
+    } else if (c.ownerUid.isEmpty) {
+      c.ownerUid = _currentUid() ?? '';
+    }
     await _customersBox.put(c.id, c.toMap());
+    _syncSet('customers', c.id, c.toMap());
   }
 
   Future<void> deleteCustomer(String id) async {
     await _ensureReady();
     await _customersBox.delete(id);
+    _syncDelete('customers', id);
   }
 
   Future<List<Customer>> getCustomers() async {
@@ -82,11 +149,13 @@ class DbService {
   Future<void> upsertProduct(Product p) async {
     await _ensureReady();
     await _productsBox.put(p.id, p.toMap());
+    _syncSet('products', p.id, p.toMap());
   }
 
   Future<void> deleteProduct(String id) async {
     await _ensureReady();
     await _productsBox.delete(id);
+    _syncDelete('products', id);
   }
 
   Future<List<Product>> getProducts() async {
@@ -100,12 +169,20 @@ class DbService {
   // ---------------- الفواتير ----------------
   Future<void> upsertInvoice(Invoice inv) async {
     await _ensureReady();
+    final existingRaw = _invoicesBox.get(inv.id);
+    if (existingRaw != null) {
+      inv.ownerUid = Invoice.fromMap(_asStringMap(existingRaw)).ownerUid;
+    } else if (inv.ownerUid.isEmpty) {
+      inv.ownerUid = _currentUid() ?? '';
+    }
     await _invoicesBox.put(inv.id, inv.toMap());
+    _syncSet('invoices', inv.id, inv.toMap());
   }
 
   Future<void> deleteInvoice(String id) async {
     await _ensureReady();
     await _invoicesBox.delete(id);
+    _syncDelete('invoices', id);
   }
 
   Future<List<Invoice>> getInvoices({String? customerId}) async {
@@ -129,12 +206,20 @@ class DbService {
   // ---------------- السندات ----------------
   Future<void> upsertReceipt(Receipt r) async {
     await _ensureReady();
+    final existingRaw = _receiptsBox.get(r.id);
+    if (existingRaw != null) {
+      r.ownerUid = Receipt.fromMap(_asStringMap(existingRaw)).ownerUid;
+    } else if (r.ownerUid.isEmpty) {
+      r.ownerUid = _currentUid() ?? '';
+    }
     await _receiptsBox.put(r.id, r.toMap());
+    _syncSet('receipts', r.id, r.toMap());
   }
 
   Future<void> deleteReceipt(String id) async {
     await _ensureReady();
     await _receiptsBox.delete(id);
+    _syncDelete('receipts', id);
   }
 
   Future<List<Receipt>> getReceipts({String? customerId}) async {
@@ -156,6 +241,9 @@ class DbService {
   }
 
   // ---------------- المستخدمون (حسابات مدير/مندوب) ----------------
+  // ملاحظة: مزامنة Firestore لملفات المستخدمين تمر عبر AccountService
+  // مباشرة (تحتاج منطقًا خاصًا: إنشاء حساب Auth أولًا، لا مجرد كتابة
+  // مستند) — الدوال هنا محلية بحتة كما كانت قبل.
   Future<void> upsertUser(UserAccount u) async {
     await _ensureReady();
     await _usersBox.put(u.id, u.toMap());

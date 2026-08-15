@@ -121,6 +121,8 @@ class AccountService {
         throw Exception('كلمة المرور ضعيفة جدًا (٦ أحرف على الأقل)');
       }
       throw Exception('تعذّر إنشاء الحساب على Firebase: ${e.message}');
+    } catch (e) {
+      throw Exception('تعذّر الاتصال بـ Firebase: $e');
     }
 
     // لو ما فيه أحد مسجّل دخول أصلاً (أول حساب على الإطلاق) سجّل

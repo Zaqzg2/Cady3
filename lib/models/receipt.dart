@@ -20,6 +20,9 @@ class Receipt {
   DateTime createdAt;
   SyncStatus syncStatus;
   DateTime updatedAt;
+  // معرّف المستخدم (Firebase UID) اللي أنشأ السند — تحدّده db_service
+  // تلقائيًا عند أول حفظ فقط ولا تغيّره بعد ذلك (راجع upsertReceipt)
+  String ownerUid;
 
   Receipt({
     required this.id,
@@ -39,6 +42,7 @@ class Receipt {
     DateTime? createdAt,
     this.syncStatus = SyncStatus.pending,
     DateTime? updatedAt,
+    this.ownerUid = '',
   })  : createdAt = createdAt ?? DateTime.now(),
         updatedAt = updatedAt ?? DateTime.now();
 
@@ -60,6 +64,7 @@ class Receipt {
         'createdAt': createdAt.toIso8601String(),
         'syncStatus': syncStatus.name,
         'updatedAt': updatedAt.toIso8601String(),
+        'ownerUid': ownerUid,
       };
 
   factory Receipt.fromMap(Map<String, dynamic> m) => Receipt(
@@ -85,6 +90,7 @@ class Receipt {
         updatedAt: m['updatedAt'] != null
             ? DateTime.parse(m['updatedAt'] as String)
             : DateTime.now(),
+        ownerUid: m['ownerUid'] as String? ?? '',
       );
 }
 
