@@ -14,7 +14,6 @@ import 'screens/customers_screen.dart';
 import 'screens/products_screen.dart';
 import 'screens/reports_screen.dart';
 import 'screens/lock_screen.dart';
-import 'screens/setup_manager_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/manager/manager_root_nav.dart';
 import 'services/auth_service.dart';
@@ -178,11 +177,9 @@ class CadySalesApp extends StatelessWidget {
                           ),
                         ),
                       )
-                    : !app.usersExist
-                        ? const SetupManagerScreen()
-                        : app.currentUser == null
-                            ? const LoginScreen()
-                            : const AppGate(),
+                    : app.currentUser == null
+                        ? const LoginScreen()
+                        : const AppGate(),
           );
         },
       ),

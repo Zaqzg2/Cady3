@@ -2,7 +2,9 @@
 /// الترجمة (compile time) — بدون أي فرع كود يدوي في باقي التطبيق:
 /// - على أندرويد/iOS/سطح المكتب (dart:io متاحة): طباعة حرارية بلوتوث حقيقية
 ///   عبر NativeBtBridge (طبقة Kotlin أصلية، راجع print_service_io.dart).
-/// - على الويب (dart:io غير متاحة): حوار طباعة المتصفح الأصلي.
+/// - على الويب (dart:io غير متاحة): مشاركة عبر قائمة مشاركة النظام
+///   الأصلية (راجع print_service_web.dart) — حوار طباعة المتصفح المباشر
+///   غير موثوق على متصفحات الجوال (قيد معروف بحزمة printing).
 ///
 /// كل الشاشات تستورد هذا الملف فقط، ولا تستورد native_bt_bridge.dart أو
 /// print_service_io.dart مباشرة أبدًا — هذا يضمن أن كود الويب لا "يرى" أي
@@ -11,6 +13,7 @@ library;
 
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -54,7 +57,14 @@ Future<void> printDocument(
     final ok = await PrintService.instance.printViaSystemDialog(pdfBytes);
     if (!context.mounted) return;
     messenger.showSnackBar(SnackBar(
-        content: Text(ok ? 'تم إرسال الفاتورة لخدمة الطباعة' : 'أُلغيت الطباعة')));
+      content: Text(ok ? 'تم إرسال الفاتورة لخدمة الطباعة' : 'أُلغيت الطباعة'),
+      action: (!ok && kIsWeb)
+          ? SnackBarAction(
+              label: 'التفاصيل',
+              onPressed: () => showPrintDiagnosticsDialog(context),
+            )
+          : null,
+    ));
     if (ok) onPrinted?.call();
     return;
   }
@@ -70,16 +80,21 @@ Future<void> printDocument(
   messenger.showSnackBar(SnackBar(
     content: const Text('تعذّر الاتصال المباشر بالطابعة'),
     duration: const Duration(seconds: 8),
-    action: SnackBarAction(
-      label: 'جرّب تطبيق آخر',
-      onPressed: () async {
-        final ok2 = await PrintService.instance.printViaSystemDialog(pdfBytes);
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(ok2 ? 'تم إرسال الفاتورة لخدمة الطباعة' : 'أُلغيت الطباعة')));
-        if (ok2) onPrinted?.call();
-      },
-    ),
+    action: kIsWeb
+        ? SnackBarAction(
+            label: 'التفاصيل',
+            onPressed: () => showPrintDiagnosticsDialog(context),
+          )
+        : SnackBarAction(
+            label: 'جرّب تطبيق آخر',
+            onPressed: () async {
+              final ok2 = await PrintService.instance.printViaSystemDialog(pdfBytes);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(ok2 ? 'تم إرسال الفاتورة لخدمة الطباعة' : 'أُلغيت الطباعة')));
+              if (ok2) onPrinted?.call();
+            },
+          ),
   ));
 }
 

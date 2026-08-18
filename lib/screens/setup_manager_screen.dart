@@ -76,7 +76,7 @@ class _SetupManagerScreenState extends State<SetupManagerScreen> {
                           TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 6),
                   const Text(
-                    'هذا أول تشغيل للتطبيق — أنشئ حساب المدير الرئيسي أولاً، ثم يمكنك إضافة حسابات المندوبين لاحقًا',
+                    'أنشئ حساب مدير جديد فقط لو ما عندك حساب من قبل. إذا عندك حساب مدير مسجّل مسبقًا (على أي جهاز)، ارجع وسجّل دخول بنفس اليوزر والباسورد بدل إنشاء حساب جديد',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.black54),
                   ),

@@ -26,9 +26,10 @@ class PrintService {
   PrintService._();
   static final PrintService instance = PrintService._();
 
-  // موجودة فقط لمطابقة شكل الواجهة مع print_service_io.dart (راجع
-  // print_service.dart الذي يستخدمها بغض النظر عن المنصة) — لا معنى لها
-  // فعليًا على الويب لأن الطباعة هنا تمر بقائمة مشاركة النظام دائمًا.
+  // مطابقة لشكل الواجهة بـ print_service_io.dart (راجع print_service.dart
+  // الذي يستخدمها بغض النظر عن المنصة) — وهنا فعليًا مُعبّاة بتفاصيل كل
+  // محاولة مشاركة (راجع _shareForPrinting)، تظهر عبر "تفاصيل" بشاشة
+  // إعدادات الطباعة → زر نسخ، لتشخيص أي فشل بدقة بدل التخمين.
   final List<String> lastAttemptLog = [];
   String? lastError;
 
@@ -52,6 +53,11 @@ class PrintService {
   }
 
   Future<bool> _shareForPrinting(Uint8List pdfBytes) async {
+    lastAttemptLog.clear();
+    void log(String line) =>
+        lastAttemptLog.add('${DateTime.now().toIso8601String().substring(11, 19)}  $line');
+
+    log('بدء المشاركة — حجم الملف: ${pdfBytes.length} بايت');
     try {
       final result = await SharePlus.instance.share(
         ShareParams(
@@ -59,9 +65,16 @@ class PrintService {
           fileNameOverrides: const ['invoice.pdf'],
         ),
       );
-      return result.status == ShareResultStatus.success;
-    } catch (e) {
+      log('نتيجة المشاركة: status = ${result.status}');
+      final success = result.status == ShareResultStatus.success;
+      if (!success) {
+        lastError = 'status=${result.status}';
+      }
+      return success;
+    } catch (e, st) {
       lastError = e.toString();
+      log('استثناء أثناء المشاركة: $e');
+      log(st.toString().split('\n').take(3).join(' | '));
       return false;
     }
   }

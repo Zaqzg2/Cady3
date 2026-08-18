@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/app_provider.dart';
+import 'setup_manager_screen.dart';
 
 /// شاشة تسجيل الدخول: اسم المستخدم وكلمة المرور يحدّدان هوية المستخدم
 /// (مدير أو مندوب) وبالتالي الواجهة التي تظهر بعد الدخول
@@ -111,6 +112,14 @@ class _LoginScreenState extends State<LoginScreen> {
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2))
                       : const Text('دخول'),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: _checking
+                      ? null
+                      : () => Navigator.of(context).push(MaterialPageRoute(
+                          builder: (_) => const SetupManagerScreen())),
+                  child: const Text('أول مرة تستخدم التطبيق؟ إنشاء حساب مدير جديد'),
                 ),
               ],
             ),
