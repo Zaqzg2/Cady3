@@ -79,6 +79,12 @@ class AppProvider extends ChangeNotifier {
     final user = await AccountService.instance.login(username, password);
     if (user == null) return false;
     currentUser = user;
+    // السبب الفعلي لعدم ظهور البيانات بعد التثبيت/تسجيل الدخول: هذي
+    // القوائم تُقرأ مرة وحدة بس بأول تشغيل للتطبيق (AppProvider.init)
+    // قبل ما يسجّل أي أحد دخوله أصلًا — فتضل فاضية بالذاكرة حتى لو
+    // pullFromFirestore (داخل AccountService.login) عبّى Hive صح تمامًا
+    // بالخلفية. لازم تُعاد قراءتها هنا صراحة بعد كل تسجيل دخول ناجح.
+    await refreshCustomersAndProducts();
     notifyListeners();
     return true;
   }
