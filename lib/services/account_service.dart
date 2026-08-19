@@ -246,6 +246,12 @@ class AccountService {
       if (!user.isActive) return null;
       await DbService.instance.upsertUser(user);
       await setSession(user.id);
+      // يسحب كل بيانات المستخدم (أو الكل لو مدير) من Firestore فورًا —
+      // هذا يحل مشكلة "البيانات موجودة بفايرستور بس ما تطلع" على أي
+      // جهاز جديد أو بعد حذف/إعادة تثبيت التطبيق، لأن Hive المحلية
+      // تكون فاضية تمامًا رغم وجود البيانات فعليًا بالسحابة
+      await DbService.instance
+          .pullFromFirestore(isManager: user.role == UserRole.manager);
       return user;
     } on FirebaseAuthException catch (e) {
       if (e.code == 'network-request-failed') {

@@ -113,6 +113,108 @@ class DbService {
     }
   }
 
+  // ---------------- سحب من Firestore (Pull Sync) ----------------
+  //
+  // upsertX أعلاه يرفع فقط (محلي → سحابة). هذا القسم بالاتجاه المعاكس:
+  // يسحب كل ما هو متاح للمستخدم الحالي من Firestore ويدمجه بـ Hive
+  // محليًا. لازم لسببين:
+  // 1) بعد تثبيت جديد/حذف التطبيق، Hive المحلية فاضية تمامًا حتى لو
+  //    البيانات موجودة فعليًا بالسحابة (من هذا الجهاز نفسه سابقًا أو من
+  //    أجهزة أخرى) — كل شاشات التطبيق (لوحة التحكم، العملاء...) تقرأ من
+  //    Hive فقط، فتظهر فاضية بدون هذي الخطوة رغم وجود البيانات بفايرستور.
+  // 2) تحديثات من مندوبين/مدير آخرين على أجهزة ثانية ما توصل تلقائيًا
+  //    بدون إعادة تشغيل التطبيق — هذا يتيح تحديث يدوي فوري (زر "مزامنة
+  //    بالنت").
+  //
+  // الدمج last-write-wins بمقارنة updatedAt: لو النسخة المحلية أحدث من
+  // السحابية (تعديل محلي لم يوصل السحابة بعد)، تُحفَظ المحلية ولا تُستبدَل.
+  // ملاحظة: هذا يسحب فقط (إضافة/تحديث) ولا يحذف محليًا أي سجل غير موجود
+  // بالنتيجة السحابية — حذف من جهاز آخر لا ينعكس هنا بعد.
+
+  Future<void> _mergeIncoming<T>({
+    required Box box,
+    required String id,
+    required Map<String, dynamic> remoteMap,
+    required T Function(Map<String, dynamic>) fromMap,
+    required DateTime Function(T) getUpdatedAt,
+  }) async {
+    final existingRaw = box.get(id);
+    if (existingRaw != null) {
+      final existing = fromMap(_asStringMap(existingRaw));
+      final remote = fromMap(remoteMap);
+      if (getUpdatedAt(existing).isAfter(getUpdatedAt(remote))) {
+        return; // النسخة المحلية أحدث — تجاهل نسخة فايرستور
+      }
+    }
+    await box.put(id, remoteMap);
+  }
+
+  /// يسحب العملاء/المنتجات/الفواتير/السندات من Firestore ويدمجها محليًا.
+  /// [isManager] يوسّع النطاق ليشمل كل المندوبين (يطابق صلاحية القراءة
+  /// بقواعد الحماية)؛ خلاف ذلك يقتصر على بيانات المستخدم الحالي فقط.
+  /// يرجع رسالة عربية جاهزة للعرض مباشرة بواجهة المستخدم (SnackBar).
+  Future<String> pullFromFirestore({required bool isManager}) async {
+    await _ensureReady();
+    final uid = _currentUid();
+    if (uid == null) return 'تعذّر التحقق من هوية المستخدم — سجّل الدخول مرة أخرى';
+
+    try {
+      int custN = 0, prodN = 0, invN = 0, recN = 0;
+
+      Query<Map<String, dynamic>> scoped(String collection) {
+        final col = FirebaseFirestore.instance.collection(collection);
+        return isManager ? col : col.where('ownerUid', isEqualTo: uid);
+      }
+
+      final custSnap = await scoped('customers').get();
+      for (final doc in custSnap.docs) {
+        await _mergeIncoming<Customer>(
+          box: _customersBox,
+          id: doc.id,
+          remoteMap: doc.data(),
+          fromMap: Customer.fromMap,
+          getUpdatedAt: (c) => c.updatedAt,
+        );
+        custN++;
+      }
+
+      // المنتجات كتالوج مشترك للكل — بلا فلترة ownerUid
+      final prodSnap = await FirebaseFirestore.instance.collection('products').get();
+      for (final doc in prodSnap.docs) {
+        await _productsBox.put(doc.id, doc.data());
+        prodN++;
+      }
+
+      final invSnap = await scoped('invoices').get();
+      for (final doc in invSnap.docs) {
+        await _mergeIncoming<Invoice>(
+          box: _invoicesBox,
+          id: doc.id,
+          remoteMap: doc.data(),
+          fromMap: Invoice.fromMap,
+          getUpdatedAt: (i) => i.updatedAt,
+        );
+        invN++;
+      }
+
+      final recSnap = await scoped('receipts').get();
+      for (final doc in recSnap.docs) {
+        await _mergeIncoming<Receipt>(
+          box: _receiptsBox,
+          id: doc.id,
+          remoteMap: doc.data(),
+          fromMap: Receipt.fromMap,
+          getUpdatedAt: (r) => r.updatedAt,
+        );
+        recN++;
+      }
+
+      return 'تمت المزامنة: $custN عميل، $prodN منتج، $invN فاتورة، $recN سند';
+    } catch (e) {
+      return 'فشلت المزامنة مع Firestore: $e';
+    }
+  }
+
   // ---------------- العملاء ----------------
   Future<void> upsertCustomer(Customer c) async {
     await _ensureReady();

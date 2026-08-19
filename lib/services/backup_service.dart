@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
+import 'package:uuid/uuid.dart';
 
 import '../models/customer.dart';
 import '../models/product.dart';
@@ -12,6 +14,46 @@ import 'settings_service.dart';
 import 'numbering_service.dart';
 import 'share_util.dart';
 
+/// سجل نسخة احتياطية واحدة — يُخزَّن محتواه كاملًا محليًا (Hive) حتى تصير
+/// النسخ الاحتياطية قائمة تقدر تستعرضها وتستعيد أو تشارك أي وحدة منها
+/// بضغطة، بدل عملية "أنشئ وشارك فورًا" لمرة وحدة بلا أي أثر بعدها.
+class BackupRecord {
+  final String id;
+  final String fileName;
+  final DateTime createdAt;
+  final int sizeBytes;
+  final String jsonContent;
+
+  BackupRecord({
+    required this.id,
+    required this.fileName,
+    required this.createdAt,
+    required this.sizeBytes,
+    required this.jsonContent,
+  });
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'fileName': fileName,
+        'createdAt': createdAt.toIso8601String(),
+        'sizeBytes': sizeBytes,
+        'jsonContent': jsonContent,
+      };
+
+  factory BackupRecord.fromMap(Map<String, dynamic> m) => BackupRecord(
+        id: m['id'] as String,
+        fileName: m['fileName'] as String,
+        createdAt: DateTime.parse(m['createdAt'] as String),
+        sizeBytes: m['sizeBytes'] as int,
+        jsonContent: m['jsonContent'] as String,
+      );
+
+  String get formattedSize {
+    if (sizeBytes < 1024) return '$sizeBytes بايت';
+    return '${(sizeBytes / 1024).toStringAsFixed(1)} KB';
+  }
+}
+
 /// نسخ احتياطي كامل لكل بيانات التطبيق (عملاء، منتجات، فواتير، سندات،
 /// إعدادات) إلى JSON يمكن مشاركته أو حفظه (Google Drive، بريد، واتساب...)،
 /// مع إمكانية استيراده لاحقًا على نفس الجهاز أو جهاز آخر. كل شيء يعمل في
@@ -21,6 +63,16 @@ class BackupService {
   static final BackupService instance = BackupService._();
 
   static const _formatVersion = 1;
+  static const _logBoxName = 'backup_log';
+  static const _maxKeptBackups = 15;
+  final _uuid = const Uuid();
+
+  Box? _logBox;
+  Future<Box> get _log async {
+    if (_logBox != null) return _logBox!;
+    _logBox = await Hive.openBox(_logBoxName);
+    return _logBox!;
+  }
 
   Future<Map<String, dynamic>> _buildBackupJson() async {
     final customers = await DbService.instance.getCustomers();
@@ -51,15 +103,72 @@ class BackupService {
     return 'كادي_نسخة_احتياطية_$stamp.json';
   }
 
-  /// يبني النسخة الاحتياطية ثم يفتح واجهة المشاركة (حفظ في Drive / واتساب
-  /// / بريد... أو تنزيل مباشر على الويب)
+  /// يبني النسخة الاحتياطية، يحفظها بسجل محلي متصفَّح (راجع listBackups)،
+  /// ثم يفتح واجهة المشاركة (حفظ في Drive / واتساب / بريد... أو تنزيل
+  /// مباشر على الويب) — نفس السلوك السابق بالضبط، بإضافة الحفظ بالسجل فقط
   Future<void> exportAndShare() async {
-    final json = await exportToJsonString();
-    final bytes = Uint8List.fromList(utf8.encode(json));
-    await ShareUtil.shareBytes(bytes, _backupFileName(),
+    final record = await _createBackupRecord();
+    final bytes = Uint8List.fromList(utf8.encode(record.jsonContent));
+    await ShareUtil.shareBytes(bytes, record.fileName,
         mimeType: 'application/json',
         text: 'نسخة احتياطية - تطبيق كادي للمنظفات');
   }
+
+  /// يبني نسخة احتياطية ويحفظها بالسجل المحلي بدون فتح أي واجهة مشاركة —
+  /// تُستخدم من شاشة "إدارة النسخ الاحتياطية" (زر إنشاء) وأيضًا من النسخ
+  /// التلقائي الدوري
+  Future<BackupRecord> _createBackupRecord() async {
+    final json = await exportToJsonString();
+    final record = BackupRecord(
+      id: _uuid.v4(),
+      fileName: _backupFileName(),
+      createdAt: DateTime.now(),
+      sizeBytes: utf8.encode(json).length,
+      jsonContent: json,
+    );
+    final box = await _log;
+    await box.put(record.id, record.toMap());
+    await _pruneOldBackups(box);
+    return record;
+  }
+
+  /// نسخة عامة من _createBackupRecord لاستخدام شاشة الإدارة مباشرة
+  Future<BackupRecord> createBackupRecord() => _createBackupRecord();
+
+  Future<void> _pruneOldBackups(Box box) async {
+    if (box.length <= _maxKeptBackups) return;
+    final records = box.values
+        .map((v) => BackupRecord.fromMap(Map<String, dynamic>.from(v)))
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    for (final old in records.skip(_maxKeptBackups)) {
+      await box.delete(old.id);
+    }
+  }
+
+  /// كل النسخ الاحتياطية المحفوظة محليًا، الأحدث أولًا
+  Future<List<BackupRecord>> listBackups() async {
+    final box = await _log;
+    final records = box.values
+        .map((v) => BackupRecord.fromMap(Map<String, dynamic>.from(v)))
+        .toList();
+    records.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return records;
+  }
+
+  Future<void> deleteBackup(String id) async {
+    final box = await _log;
+    await box.delete(id);
+  }
+
+  Future<void> shareBackup(BackupRecord record) async {
+    final bytes = Uint8List.fromList(utf8.encode(record.jsonContent));
+    await ShareUtil.shareBytes(bytes, record.fileName,
+        mimeType: 'application/json',
+        text: 'نسخة احتياطية - تطبيق كادي للمنظفات');
+  }
+
+  Future<void> restoreBackup(BackupRecord record) => importFromJson(record.jsonContent);
 
   /// يفتح منتقي ملفات ليختار المستخدم ملف JSON للاستيراد، ويعيد محتواه
   /// كنص مباشرة (withData: true تضمن توفر البايتات على كل المنصات، بما

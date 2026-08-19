@@ -73,7 +73,14 @@ Future<void> printDocument(
       .printPdfBytes(pdfBytes, printerMac: printerMac, blackThreshold: blackThreshold);
   if (!context.mounted) return;
   if (ok) {
-    messenger.showSnackBar(const SnackBar(content: Text('تمت الطباعة')));
+    // على الويب "النجاح" يعني بس إن المستخدم اختار تطبيقًا من قائمة
+    // المشاركة (مو بالضرورة تطبيق طباعة فعلي) — "تمت الطباعة" ادّعاء
+    // مبالَغ فيه هنا؛ على الجوال/سطح المكتب الاتصال المباشر بالبلوتوث
+    // يعني طباعة فعلية حقيقية فتبقى الرسالة الأصلية صحيحة
+    messenger.showSnackBar(SnackBar(
+        content: Text(kIsWeb
+            ? 'تم الإرسال — اختر تطبيق طباعة من القائمة إذا كان متوفرًا (مثل RawBT)'
+            : 'تمت الطباعة')));
     onPrinted?.call();
     return;
   }

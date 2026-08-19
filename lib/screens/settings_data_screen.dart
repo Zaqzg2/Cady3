@@ -3,12 +3,12 @@ import 'package:provider/provider.dart';
 
 import '../models/company_settings.dart';
 import '../providers/app_provider.dart';
-import '../services/backup_service.dart';
 import '../services/auto_backup_service.dart';
 import '../services/data_stats_service.dart';
 import '../services/cleanup_service.dart';
 import '../services/csv_export_service.dart';
 import '../utils/formatters.dart';
+import 'backup_management_screen.dart';
 
 /// البيانات والنسخ الاحتياطي: نسخ يدوي فوري، نسخ تلقائي دوري، استيراد،
 /// حجم البيانات الحالي، تنظيف الصور غير المستخدمة، وتصدير Excel/CSV
@@ -42,49 +42,6 @@ class _SettingsDataScreenState extends State<SettingsDataScreen> {
     mutate(s);
     await app.saveSettings(s);
     setState(() {});
-  }
-
-  Future<void> _manualBackup() async {
-    setState(() => _busy = true);
-    try {
-      await BackupService.instance.exportAndShare();
-      _snack('تم إنشاء النسخة الاحتياطية بنجاح');
-    } catch (e) {
-      _snack('تعذّر إنشاء النسخة الاحتياطية: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _importBackup() async {
-    final content = await BackupService.instance.pickBackupContent();
-    if (content == null) return;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('استيراد نسخة احتياطية'),
-        content: const Text(
-            'سيتم دمج بيانات الملف المختار مع البيانات الحالية (لن يتم حذف أي شيء). هل تريد المتابعة؟'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('استيراد')),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-    setState(() => _busy = true);
-    try {
-      await BackupService.instance.importFromJson(content);
-      if (mounted) {
-        await context.read<AppProvider>().init();
-        setState(() => _statsFuture = DataStatsService.collect());
-        _snack('تم استيراد النسخة الاحتياطية بنجاح');
-      }
-    } catch (e) {
-      _snack('تعذّر استيراد الملف: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   Future<void> _cleanup() async {
@@ -128,19 +85,11 @@ class _SettingsDataScreenState extends State<SettingsDataScreen> {
               const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.upload_file),
-                  label: const Text('نسخ احتياطي يدوي فوري'),
-                  onPressed: _manualBackup,
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.download),
-                  label: const Text('استيراد نسخة سابقة'),
-                  onPressed: _importBackup,
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.folder_special_outlined),
+                  label: const Text('إدارة النسخ الاحتياطية'),
+                  onPressed: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const BackupManagementScreen())),
                 ),
               ),
               const Divider(height: 32),
