@@ -16,6 +16,7 @@ class SyncPulse extends StatefulWidget {
   // وهميًا إن لم يكن لدينا تقدّم حقيقي من العملية نفسها
   final double? progress;
   final String? centerLabel; // نص العدّ في حالة pending (مثال: "12")
+  final String pendingCaption; // النص أسفل centerLabel، قابل للتخصيص
   final double size;
 
   const SyncPulse({
@@ -23,6 +24,7 @@ class SyncPulse extends StatefulWidget {
     required this.state,
     this.progress,
     this.centerLabel,
+    this.pendingCaption = 'معلّق',
     this.size = 104,
   });
 
@@ -148,7 +150,7 @@ class _SyncPulseState extends State<SyncPulse>
               ),
             ),
             Text(
-              'معلّق',
+              widget.pendingCaption,
               style: TextStyle(
                 fontSize: widget.size * 0.095,
                 fontWeight: FontWeight.bold,

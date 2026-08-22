@@ -16,6 +16,7 @@ class SyncHeroCard extends StatelessWidget {
   final SyncPulseState state;
   final double? progress;
   final String? centerLabel;
+  final String pendingCaption;
   final String title;
   final String subtitle;
   final String? ctaLabel;
@@ -28,6 +29,7 @@ class SyncHeroCard extends StatelessWidget {
     required this.state,
     this.progress,
     this.centerLabel,
+    this.pendingCaption = 'معلّق',
     required this.title,
     required this.subtitle,
     this.ctaLabel,
@@ -65,7 +67,12 @@ class SyncHeroCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          SyncPulse(state: state, progress: progress, centerLabel: centerLabel),
+          SyncPulse(
+            state: state,
+            progress: progress,
+            centerLabel: centerLabel,
+            pendingCaption: pendingCaption,
+          ),
           const SizedBox(height: 16),
           Text(
             title,
