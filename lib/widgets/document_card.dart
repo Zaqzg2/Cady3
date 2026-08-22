@@ -17,6 +17,7 @@ import '../screens/invoice_screen.dart';
 import '../screens/receipt_screen.dart';
 import '../screens/pdf_preview_screen.dart';
 import '../screens/customer_detail_screen.dart';
+import '../theme/app_theme.dart';
 
 /// بطاقة مستند (فاتورة أو سند) تُستخدم في "آخر العمليات" بالصفحة الرئيسية
 /// وفي سجل السندات والفواتير: أيقونة دائرية، 3 أسطر معلومات، إجراءات سريعة،
@@ -451,7 +452,7 @@ class DocumentCard extends StatelessWidget {
         children: [
           SlidableAction(
             onPressed: (_) => _openDetails(context),
-            backgroundColor: Colors.teal,
+            backgroundColor: AppTheme.syncSuccess,
             foregroundColor: Colors.white,
             icon: Icons.edit_outlined,
             label: 'تعديل',

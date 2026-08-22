@@ -45,12 +45,12 @@ enum AutoBackupLocation { local, driveShare }
 
 /// ألوان الهوية المتاحة للاختيار من بينها في المظهر
 const List<Color> kBrandColorPalette = [
-  Color(0xFF00838F), // فيروزي (الافتراضي)
+  Color(0xFFC62828), // أحمر (الافتراضي)
+  Color(0xFF00838F), // فيروزي
   Color(0xFF2E7D32), // أخضر
   Color(0xFF1565C0), // أزرق
   Color(0xFF6A1B9A), // بنفسجي
   Color(0xFFEF6C00), // برتقالي
-  Color(0xFFC62828), // أحمر
   Color(0xFF37474F), // رمادي غامق
 ];
 

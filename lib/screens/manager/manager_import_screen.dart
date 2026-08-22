@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../providers/app_provider.dart';
 import '../../services/manager_sync_service.dart';
+import '../../theme/app_theme.dart';
 
 /// استيراد ملف مزامنة من مندوب: اختيار الملف، معاينة الأرقام (فواتير/
 /// سندات/عملاء جدد/تكرارات/أخطاء)، ثم اعتماد أو إلغاء. الاعتماد فقط هو
@@ -122,7 +123,7 @@ class _ManagerImportScreenState extends State<ManagerImportScreen> {
                 Text(p.fileName, style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
                 const Divider(height: 24),
                 _StatLine(label: 'عدد الفواتير', value: p.invoicesCount, color: Colors.indigo),
-                _StatLine(label: 'عدد السندات', value: p.receiptsCount, color: Colors.teal),
+                _StatLine(label: 'عدد السندات', value: p.receiptsCount, color: AppTheme.syncSuccess),
                 _StatLine(label: 'العملاء الجدد', value: p.newCustomersCount, color: Colors.green),
                 _StatLine(label: 'التكرارات', value: p.duplicatesCount, color: Colors.orange),
                 _StatLine(label: 'الأخطاء', value: p.errorsCount, color: Colors.red),

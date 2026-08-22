@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../providers/app_provider.dart';
 import '../../models/user_account.dart';
+import '../../theme/app_theme.dart';
 
 /// إدارة حسابات المندوبين (وحسابات المدراء الإضافية إن وُجدت): عرض،
 /// إضافة، تعديل، وتفعيل/إيقاف
@@ -72,7 +73,7 @@ class _ManagerUsersScreenState extends State<ManagerUsersScreen> {
                         onTap: () => _openForm(existing: u),
                         leading: CircleAvatar(
                           backgroundColor:
-                              isManager ? Colors.indigo : Colors.teal,
+                              isManager ? Colors.indigo : AppTheme.syncSuccess,
                           child: Icon(
                               isManager
                                   ? Icons.admin_panel_settings

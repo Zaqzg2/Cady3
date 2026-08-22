@@ -3,9 +3,21 @@ import 'package:flutter/material.dart';
 /// هوية بصرية لتطبيق كادي للمنظفات — أزرار وبطاقات كبيرة مناسبة للمس،
 /// مع دعم كامل للوضع الليلي
 class AppTheme {
-  static const Color primary = Color(0xFF00838F); // فيروزي (منظفات/نظافة)
-  static const Color primaryDark = Color(0xFF005662);
+  static const Color primary = Color(0xFFC62828); // أحمر (هوية كادي الجديدة)
+  static const Color primaryDark = Color(0xFF8C1D1D);
   static const Color accent = Color(0xFFFFA000);
+
+  // ألوان دلالية لحالات المزامنة (مركز المزامنة) — تدرّج فيروزي/ذهبي من
+  // هوية كادي بدل الأخضر/البرتقالي العام، موحّدة بين شاشتي المندوب والمدير
+  // الفيروزي القديم بقي محجوزًا لمعنى "تمام/نجاح" فقط، منفصل الآن عن
+  // لون العلامة التجارية (الذي أصبح أحمر) — حتى لا تعني حالة "ناجح" اللون
+  // نفسه الذي يعني عادةً خطر/توقف
+  static const Color syncSuccess = Color(0xFF00838F);
+  static const Color syncSuccessSoft = Color(0xFFE1F1F2);
+  static const Color syncPending = accent;
+  static const Color syncPendingSoft = Color(0xFFFFF2DC);
+  static const Color syncError = Color(0xFFD64545);
+  static const Color syncErrorSoft = Color(0xFFFBE8E7);
 
   static ThemeData light({Color? seedColor}) {
     return ThemeData(

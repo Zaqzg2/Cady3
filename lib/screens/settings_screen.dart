@@ -12,6 +12,7 @@ import 'settings_appearance_screen.dart';
 import 'settings_privacy_screen.dart';
 import 'settings_data_screen.dart';
 import 'sync_screen.dart';
+import '../theme/app_theme.dart';
 
 /// الشاشة الرئيسية للإعدادات — قائمة أقسام بنمط iOS/Android الرسمي:
 /// كل قسم سطر واحد بأيقونة + عنوان + سطر فرعي يلخّص الحالة + سهم يفتح
@@ -107,7 +108,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               SettingsTile(
                 icon: Icons.store_outlined,
-                iconColor: Colors.teal,
+                iconColor: AppTheme.syncSuccess,
                 title: 'بيانات الشركة والمندوب',
                 subtitle: companySubtitle,
                 onTap: () => _open(const SettingsCompanyScreen()),

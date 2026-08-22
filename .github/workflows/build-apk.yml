@@ -56,6 +56,13 @@ jobs:
       - name: تنزيل حزم Dart/Flutter
         run: flutter pub get
 
+      # يتطلّب وجود assets/images/app_icon.png ووجود مجلد android (يسبقها
+      # بالخطوات أعلاه) — يولّد كل أحجام mipmap + الأيقونة المتكيّفة دفعة
+      # واحدة بدل نسخها يدويًا. إن كانت الصورة غير موجودة بعد، هذه الخطوة
+      # تفشل بوضوح (وهذا مقصود) بدل تجاهل الأيقونة بصمت.
+      - name: توليد أيقونة التطبيق (flutter_launcher_icons)
+        run: dart run flutter_launcher_icons
+
       # الحل الجذري لخطأ "It is too late to set compileSdk" (AgpDslLockedException)
       # ولخطأ ":file_picker is currently compiled against android-34":
       # نعدّل نص ملفات build.gradle الأصلية لكل حزمة مباشرة في مكانها الحقيقي
@@ -69,6 +76,9 @@ jobs:
 
       - name: ترقيع صلاحيات AndroidManifest (بلوتوث)
         run: python3 scripts/patch_manifest.py
+
+      - name: ترقيع اسم التطبيق بالمانيفست (كادي للمنظفات → كادي)
+        run: python3 scripts/patch_app_label.py
 
       # يربط طبقة البلوتوث الأصلية native/BluetoothPrinterBridge.kt (بديل
       # print_bluetooth_thermal بعد إثبات فشلها بالكتابة على أجهزة معيّنة)

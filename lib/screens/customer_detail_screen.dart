@@ -21,6 +21,7 @@ import 'invoice_screen.dart';
 import 'receipt_screen.dart';
 import 'pdf_preview_screen.dart';
 import '../widgets/customer_card.dart' show kOverdueAfterDays;
+import '../theme/app_theme.dart';
 
 /// صفحة العميل الكاملة: رأس بمعلومات العميل، بطاقات مؤشرات، إجراءات كشف
 /// الحساب، وسجل نشاط تفصيلي (Timeline) لكل فاتورة/سند مع إجراءات سريعة
@@ -214,7 +215,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.shopping_cart_outlined, color: Colors.teal),
+              leading: const Icon(Icons.shopping_cart_outlined, color: AppTheme.syncSuccess),
               title: const Text('فاتورة بيع'),
               onTap: () {
                 Navigator.pop(ctx);
@@ -579,7 +580,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                       backgroundColor: Colors.grey.shade300,
                       color: creditRatio >= 1
                           ? Colors.red
-                          : (creditRatio >= 0.8 ? Colors.orange : Colors.teal),
+                          : (creditRatio >= 0.8 ? Colors.orange : AppTheme.syncSuccess),
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -651,7 +652,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             _statCard('الرصيد', s == null ? '...' : Formatters.money(s.balance),
                 Icons.account_balance_wallet_outlined, Colors.indigo),
             _statCard('الفواتير', s == null ? '...' : '${s.invoicesCount}',
-                Icons.receipt_long_outlined, Colors.teal),
+                Icons.receipt_long_outlined, AppTheme.syncSuccess),
             _statCard('المقبوض', s == null ? '...' : Formatters.money(s.receivedTotal),
                 Icons.payments_outlined, Colors.green),
             _statCard('المرتجع', s == null ? '...' : Formatters.money(s.returnsTotal),
@@ -850,7 +851,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
           ),
           SlidableAction(
             onPressed: (_) => _duplicateEntry(e),
-            backgroundColor: Colors.teal,
+            backgroundColor: AppTheme.syncSuccess,
             foregroundColor: Colors.white,
             icon: Icons.content_copy_outlined,
             label: 'تكرار',
