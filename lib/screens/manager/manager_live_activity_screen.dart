@@ -27,7 +27,8 @@ import '../pdf_preview_screen.dart';
 /// منها يمرّ عبر db_service (الملكية الأصلية للمندوب تُحفَظ تلقائيًا،
 /// راجع upsertInvoice/upsertReceipt).
 class ManagerLiveActivityScreen extends StatefulWidget {
-  const ManagerLiveActivityScreen({super.key});
+  final String? initialRepId;
+  const ManagerLiveActivityScreen({super.key, this.initialRepId});
 
   @override
   State<ManagerLiveActivityScreen> createState() =>
@@ -38,11 +39,12 @@ class _ManagerLiveActivityScreenState extends State<ManagerLiveActivityScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
   List<UserAccount> _reps = [];
-  String? _selectedRepId; // null = كل المندوبين
+  late String? _selectedRepId; // null = كل المندوبين
 
   @override
   void initState() {
     super.initState();
+    _selectedRepId = widget.initialRepId;
     _tab = TabController(length: 2, vsync: this);
     _loadReps();
   }
