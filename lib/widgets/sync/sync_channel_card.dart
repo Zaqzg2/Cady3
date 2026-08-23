@@ -21,6 +21,10 @@ class SyncChannelCard extends StatelessWidget {
   final Color? dotColor;
   final String infoText;
   final List<SyncQuickAction> quickActions;
+  // افتراضيًا الضغط العادي يعرض infoText فقط. لو مررت onTap صراحةً (مثال:
+  // فتح شاشة الصادر/الوارد) تُستخدم بدلها — نفس السلوك القديم لأي بطاقة
+  // ما تحتاج هذا التخصيص
+  final VoidCallback? onTap;
 
   const SyncChannelCard({
     super.key,
@@ -32,6 +36,7 @@ class SyncChannelCard extends StatelessWidget {
     this.dotColor,
     required this.infoText,
     this.quickActions = const [],
+    this.onTap,
   });
 
   void _showInfo(BuildContext context) {
@@ -95,7 +100,7 @@ class SyncChannelCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () => _showInfo(context),
+        onTap: onTap ?? () => _showInfo(context),
         onLongPress: () => _showQuickActions(context),
         child: Padding(
           padding: const EdgeInsets.all(14),

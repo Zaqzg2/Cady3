@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import '../widgets/sync/sync_channel_card.dart';
 import '../widgets/sync/sync_hero_card.dart';
 import '../widgets/sync/sync_pulse.dart';
+import 'sync_outbox_inbox_screen.dart';
 import 'sync_pending_preview_screen.dart';
 
 /// شاشة المزامنة عند المندوب — مركز مزامنة موحّد: بطاقة حالة رئيسية تجيب
@@ -295,6 +296,8 @@ class _SyncScreenState extends State<SyncScreen> {
                         : 'آخر إرسال ${_formatDate(_lastExport!.at)}',
                     infoText:
                         'قناة احتياطية تعمل حتى بدون إنترنت — تُصدّر ملفًا وترسله للمدير، ويرد عليك بملف اعتماد.',
+                    onTap: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const SyncOutboxInboxScreen())),
                     quickActions: [
                       SyncQuickAction(
                         icon: Icons.file_upload_outlined,

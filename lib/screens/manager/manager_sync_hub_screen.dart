@@ -228,6 +228,7 @@ class _ManagerSyncHubScreenState extends State<ManagerSyncHubScreen> {
                     line1: 'ملفات من ولإلى المندوبين',
                     infoText:
                         'الملفات الواردة من المندوبين تحتاج مراجعتك واعتمادك قبل أن تُحتسب متزامنة نهائيًا.',
+                    onTap: _goLog,
                     quickActions: [
                       SyncQuickAction(
                           icon: Icons.file_download_outlined,
