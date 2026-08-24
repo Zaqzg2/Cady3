@@ -246,7 +246,7 @@ class _SyncScreenState extends State<SyncScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('مركز المزامنة')),
       body: RefreshIndicator(
-        onRefresh: _refresh,
+        onRefresh: _syncFirebaseNow,
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [

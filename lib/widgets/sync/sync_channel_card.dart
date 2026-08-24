@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// إجراء واحد يظهر في القائمة السفلية عند الضغط المطوّل على بطاقة القناة
+/// إجراء واحد يظهر بالقائمة السفلية لبطاقة القناة
 class SyncQuickAction {
   final IconData icon;
   final String label;
@@ -9,9 +9,10 @@ class SyncQuickAction {
       {required this.icon, required this.label, required this.onPressed});
 }
 
-/// بطاقة صغيرة تمثّل قناة مزامنة واحدة (فايربيس أو يدوي). الضغط العادي
-/// يعرض شرحًا سريعًا لما تفعله القناة، والضغط المطوّل يفتح قائمة
-/// الإجراءات السريعة الخاصة بها — بدل إخفاء كل الإجراءات خلف ملاحة كاملة
+/// بطاقة صغيرة تمثّل قناة مزامنة واحدة (فايربيس أو يدوي). ضغطة واحدة
+/// عادية — بدون اعتماد على ضغط مطوّل قد لا يُلتقط بموثوقية على كل جهاز
+/// أو متصفّح — تفتح لوحة سفلية واضحة فيها الشرح ثم الإجراءات، بدل
+/// SnackBar خافت يسهل تفويته
 class SyncChannelCard extends StatelessWidget {
   final IconData icon;
   final Color iconColor;
@@ -21,9 +22,8 @@ class SyncChannelCard extends StatelessWidget {
   final Color? dotColor;
   final String infoText;
   final List<SyncQuickAction> quickActions;
-  // افتراضيًا الضغط العادي يعرض infoText فقط. لو مررت onTap صراحةً (مثال:
-  // فتح شاشة الصادر/الوارد) تُستخدم بدلها — نفس السلوك القديم لأي بطاقة
-  // ما تحتاج هذا التخصيص
+  // لو مررت onTap صراحةً (مثال: فتح شاشة الصادر/الوارد مباشرة) تُستخدم
+  // بدل اللوحة الافتراضية — لأي بطاقة تحتاج فتح شاشة كاملة مباشرة
   final VoidCallback? onTap;
 
   const SyncChannelCard({
@@ -39,56 +39,67 @@ class SyncChannelCard extends StatelessWidget {
     this.onTap,
   });
 
-  void _showInfo(BuildContext context) {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(infoText), duration: const Duration(seconds: 4)),
-    );
-  }
-
-  void _showQuickActions(BuildContext context) {
-    if (quickActions.isEmpty) {
-      _showInfo(context);
-      return;
-    }
+  void _showSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 38,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(ctx).dividerColor,
-                borderRadius: BorderRadius.circular(99),
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: 10),
+              Center(
+                child: Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Theme.of(ctx).dividerColor,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: Text(title,
-                    style:
-                        const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                child: Row(
+                  children: [
+                    Icon(icon, color: iconColor, size: 20),
+                    const SizedBox(width: 8),
+                    Text(title,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  ],
+                ),
               ),
-            ),
-            for (final action in quickActions)
-              ListTile(
-                leading: Icon(action.icon),
-                title: Text(action.label),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  action.onPressed();
-                },
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 6, 20, 4),
+                child: Text(
+                  infoText,
+                  style: TextStyle(color: Colors.grey.shade600, fontSize: 13, height: 1.6),
+                ),
               ),
-            const SizedBox(height: 6),
-          ],
+              if (quickActions.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(0, 10, 0, 0),
+                  child: Divider(height: 1),
+                ),
+                for (final action in quickActions)
+                  ListTile(
+                    leading: Icon(action.icon),
+                    title: Text(action.label),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      action.onPressed();
+                    },
+                  ),
+              ],
+              const SizedBox(height: 6),
+            ],
+          ),
         ),
       ),
     );
@@ -100,8 +111,7 @@ class SyncChannelCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: onTap ?? () => _showInfo(context),
-        onLongPress: () => _showQuickActions(context),
+        onTap: onTap ?? () => _showSheet(context),
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Column(
@@ -117,7 +127,9 @@ class SyncChannelCard extends StatelessWidget {
                       height: 7,
                       decoration:
                           BoxDecoration(shape: BoxShape.circle, color: dotColor),
-                    ),
+                    )
+                  else
+                    Icon(Icons.chevron_left, size: 16, color: Colors.grey.shade400),
                 ],
               ),
               const SizedBox(height: 8),

@@ -362,66 +362,46 @@ class _BackupRecordCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final time =
+        '${record.createdAt.hour.toString().padLeft(2, '0')}:${record.createdAt.minute.toString().padLeft(2, '0')}';
     return Card(
+      margin: EdgeInsets.zero,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         onTap: busy ? null : onTap,
         child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+          child: Row(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(record.fileName,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis),
-                  ),
-                  const Icon(Icons.archive_outlined, size: 20),
-                ],
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: AppTheme.syncPendingSoft,
+                child: Icon(Icons.archive_outlined, color: AppTheme.syncPending, size: 18),
               ),
-              const SizedBox(height: 4),
-              Text(
-                '${Formatters.d(record.createdAt)}  ${record.createdAt.hour.toString().padLeft(2, '0')}:${record.createdAt.minute.toString().padLeft(2, '0')}',
-                style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.sd_storage_outlined, size: 15),
-                    const SizedBox(width: 6),
-                    Text('الحجم: ${record.formattedSize}', style: const TextStyle(fontSize: 12.5)),
+                    Text('${Formatters.d(record.createdAt)}  $time',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5)),
+                    const SizedBox(height: 2),
+                    Text('${record.formattedSize} • ${record.fileName}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 11.5)),
                   ],
                 ),
               ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: Icon(Icons.delete_outline, size: 18, color: AppTheme.syncError),
-                      label: Text('حذف', style: TextStyle(color: AppTheme.syncError)),
-                      onPressed: busy ? null : onDelete,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.share_outlined, size: 18),
-                      label: const Text('مشاركة'),
-                      onPressed: busy ? null : onShare,
-                    ),
-                  ),
-                ],
+              IconButton(
+                icon: const Icon(Icons.share_outlined, size: 20),
+                tooltip: 'مشاركة',
+                onPressed: busy ? null : onShare,
+              ),
+              IconButton(
+                icon: Icon(Icons.delete_outline, size: 20, color: AppTheme.syncError),
+                tooltip: 'حذف',
+                onPressed: busy ? null : onDelete,
               ),
             ],
           ),
