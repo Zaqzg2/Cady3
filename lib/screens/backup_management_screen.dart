@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/backup_service.dart';
 import '../services/auto_backup_service.dart';
+import '../services/csv_export_service.dart';
 import '../models/company_settings.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
@@ -30,6 +31,7 @@ class _BackupManagementScreenState extends State<BackupManagementScreen> {
   late Future<List<BackupRecord>> _future;
   DateTime? _autoLastRun;
   bool _loadingAuto = true;
+  bool _csvBusy = false;
 
   @override
   void initState() {
@@ -69,6 +71,20 @@ class _BackupManagementScreenState extends State<BackupManagementScreen> {
       setState(() => _lastError = 'تعذّر إنشاء النسخة: $e');
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// منفصل تمامًا عن _busy/_lastError الخاصّين بالنسخ الاحتياطي أعلاه —
+  /// فشل تصدير CSV لا يعني وجود مشكلة بالنسخ الاحتياطية نفسها
+  Future<void> _exportCsv() async {
+    if (_csvBusy) return;
+    setState(() => _csvBusy = true);
+    try {
+      await CsvExportService.exportAndShare();
+    } catch (e) {
+      _snack('تعذّر تصدير CSV: $e');
+    } finally {
+      if (mounted) setState(() => _csvBusy = false);
     }
   }
 
@@ -308,6 +324,24 @@ class _BackupManagementScreenState extends State<BackupManagementScreen> {
                         ],
                       ),
                     ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                SyncChannelCard(
+                  icon: Icons.table_chart_outlined,
+                  iconColor: Theme.of(context).colorScheme.tertiary,
+                  title: 'CSV',
+                  line1: 'للمراجعة في Excel/Sheets',
+                  line2: 'عملاء، فواتير، وسندات',
+                  infoText:
+                      'يُصدّر ملفات CSV منفصلة للعملاء والفواتير والسندات لفتحها في '
+                      'Excel أو Sheets ومراجعتها يدويًا. منفصل تمامًا عن النسخة '
+                      'الاحتياطية JSON أعلاه، ولا يُستخدم للاستعادة.',
+                  quickActions: [
+                    SyncQuickAction(
+                        icon: Icons.file_download_outlined,
+                        label: 'تصدير الآن',
+                        onPressed: _csvBusy ? () {} : _exportCsv),
                   ],
                 ),
                 const SizedBox(height: 16),
