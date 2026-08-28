@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasProfile() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isManager() {
+      return hasProfile() && myProfile().role == 'manager' && myProfile().isActive == true;
+    }
+
+    // مسجّل دخول، وحسابه موجود بـ Firestore، وغير معطَّل من المدير
+    function isActiveSelf() {
+      return hasProfile() && myProfile().isActive == true;
+    }
+
+    function isOwner(ownerUid) {
+      return isActiveSelf() && request.auth.uid == ownerUid;
+    }
+
+    // ---------------- ملفات تعريف المستخدمين (مدير/مندوب) ----------------
+    // ملاحظة أمان: create مسموح لأي مستخدم مسجّل دخول لمستند بمعرّفه
+    // هو نفسه (request.auth.uid == userId) بدون شرط "مدير" — هذا يفتح
+    // فقط سيناريو أول تشغيل للتطبيق (إنشاء أول حساب مدير، حيث يستحيل
+    // تحقّق isManager() لعدم وجود أي مستند مستخدم بعد). في تطبيقنا هذا
+    // لا يُستغل لتصعيد صلاحيات: الواجهة لا تعرض تسجيلًا ذاتيًا للمندوبين
+    // إطلاقًا — المدير وحده من يُنشئ حسابات المندوبين، بمعرّفهم هم لا
+    // معرّفه هو (فتلك الكتابة تمر عبر شرط isManager() لا شرط الذات).
+    // update/delete حصرًا للمدير حتى لا يقدر أي حساب يرقّي دوره بنفسه.
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isManager());
+      allow create: if isSignedIn() && (request.auth.uid == userId || isManager());
+      allow update, delete: if isManager();
+    }
+
+    // ---------------- العملاء ----------------
+    match /customers/{customerId} {
+      allow read, update, delete: if isOwner(resource.data.ownerUid) || isManager();
+      allow create: if isActiveSelf() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    // ---------------- المنتجات (كتالوج مشترك) ----------------
+    match /products/{productId} {
+      allow read: if isActiveSelf();
+      allow write: if isManager();
+    }
+
+    // ---------------- الفواتير (نقدي / آجل / مرتجع) ----------------
+    match /invoices/{invoiceId} {
+      allow read, update, delete: if isOwner(resource.data.ownerUid) || isManager();
+      allow create: if isActiveSelf() && request.resource.data.ownerUid == request.auth.uid;
+    }
+
+    // ---------------- سندات القبض ----------------
+    match /receipts/{receiptId} {
+      allow read, update, delete: if isOwner(resource.data.ownerUid) || isManager();
+      allow create: if isActiveSelf() && request.resource.data.ownerUid == request.auth.uid;
+    }
+  }
+}

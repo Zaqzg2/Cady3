@@ -1,0 +1,396 @@
+import 'dart:async';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:provider/provider.dart';
+
+import 'firebase_options.dart';
+import 'providers/app_provider.dart';
+import 'models/company_settings.dart';
+import 'theme/app_theme.dart';
+import 'screens/home_screen.dart';
+import 'screens/customers_screen.dart';
+import 'screens/products_screen.dart';
+import 'screens/reports_screen.dart';
+import 'screens/settings_screen.dart';
+import 'screens/lock_screen.dart';
+import 'screens/login_screen.dart';
+import 'screens/manager/manager_root_nav.dart';
+import 'services/auth_service.dart';
+import 'models/user_account.dart';
+import 'widgets/privacy_cover_overlay.dart';
+
+/// يحسب أقصر مدة خمول مؤدّية لقفل التطبيق تلقائيًا، بين خيار "القفل
+/// التلقائي" و"تسجيل الخروج التلقائي" (أيهما أقصر يُطبَّق أولاً)، أو
+/// null إن كان كلاهما معطّلاً
+Duration? effectiveLockDuration(CompanySettings s) {
+  Duration? fromAutoLock;
+  switch (s.autoLockOption) {
+    case AutoLockOption.immediate:
+      fromAutoLock = Duration.zero;
+      break;
+    case AutoLockOption.oneMinute:
+      fromAutoLock = const Duration(minutes: 1);
+      break;
+    case AutoLockOption.fiveMinutes:
+      fromAutoLock = const Duration(minutes: 5);
+      break;
+    case AutoLockOption.never:
+      fromAutoLock = null;
+      break;
+  }
+  final fromLogout =
+      s.autoLogoutHours > 0 ? Duration(hours: s.autoLogoutHours) : null;
+  if (fromAutoLock == null) return fromLogout;
+  if (fromLogout == null) return fromAutoLock;
+  return fromAutoLock < fromLogout ? fromAutoLock : fromLogout;
+}
+
+void main() {
+  // نلتقط أي خطأ غير متوقّع في أي مكان بالتطبيق (بما فيه أخطاء غير متزامنة)
+  // ونطبعه بوضوح في السجل (logcat) بدل ما يختفي بصمت ويترك المستخدم أمام
+  // شاشة بيضاء بلا أي تفسير.
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    FlutterError.onError = (FlutterErrorDetails details) {
+      FlutterError.presentError(details);
+      debugPrint('FlutterError: ${details.exceptionAsString()}');
+      debugPrint('${details.stack}');
+    };
+    // افتراضياً، في نسخة release، أي خطأ أثناء بناء widget يظهر كمربع
+    // رمادي فارغ بلا أي رسالة (لإخفاء التفاصيل التقنية عن المستخدم
+    // النهائي). نتجاوز هذا مؤقتاً لعرض رسالة الخطأ الحقيقية على الشاشة
+    // نفسها، لتسهيل التشخيص، بدل تخمين السبب من مربع رمادي بلا معنى.
+    ErrorWidget.builder = (FlutterErrorDetails details) {
+      // نستخرج فقط الأسطر المتعلقة بكود التطبيق نفسه (package:cady_sales_app)
+      // من تتبّع الخطأ (stack trace)، ونتجاهل أسطر إطار عمل Flutter الداخلية
+      // الطويلة، حتى تظهر رسالة قصيرة وواضحة تحدد الملف والسطر بالضبط.
+      final stackLines = details.stack
+              ?.toString()
+              .split('\n')
+              .where((l) => l.contains('package:cady_sales_app'))
+              .take(4)
+              .join('\n') ??
+          '';
+      return Container(
+        color: Colors.red.shade50,
+        padding: const EdgeInsets.all(8),
+        child: SingleChildScrollView(
+          child: Text(
+            'خطأ في بناء الواجهة:\n${details.exceptionAsString()}\n\n$stackLines',
+            style: const TextStyle(color: Colors.red, fontSize: 10),
+          ),
+        ),
+      );
+    };
+    // تهيئة Firebase — مرحلة التحقّق الأولى من الربط. لو فشلت (شبكة غير
+    // متاحة، إعدادات خاطئة...) التطبيق يكمل عادي على البيانات المحلية
+    // بدل ما يتعطّل بالكامل، ويظهر شريط تشخيصي بسيط أعلى الشاشة بالحالة
+    // (هذا الشريط مؤقت لمرحلة الربط فقط، يُحذف بعد التأكد من نجاحه).
+    String? firebaseInitError;
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    } catch (e) {
+      firebaseInitError = 'فشل الاتصال بـ Firebase: $e';
+      debugPrint(firebaseInitError);
+    }
+
+    runApp(CadySalesApp(firebaseInitError: firebaseInitError));
+  }, (error, stack) {
+    debugPrint('Uncaught zone error: $error');
+    debugPrint('$stack');
+  });
+}
+
+class CadySalesApp extends StatelessWidget {
+  final String? firebaseInitError;
+  const CadySalesApp({super.key, this.firebaseInitError});
+
+  @override
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider(
+      create: (_) => AppProvider()..init(),
+      child: Consumer<AppProvider>(
+        builder: (context, app, _) {
+          return MaterialApp(
+            title: 'كادي',
+            debugShowCheckedModeBanner: false,
+            locale: const Locale('ar'),
+            supportedLocales: const [Locale('ar')],
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            theme: AppTheme.light(seedColor: app.settings.themeColor),
+            darkTheme: AppTheme.dark(seedColor: app.settings.themeColor),
+            themeMode: switch (app.settings.themeMode) {
+              AppThemeMode.system => ThemeMode.system,
+              AppThemeMode.light => ThemeMode.light,
+              AppThemeMode.dark => ThemeMode.dark,
+            },
+            builder: (context, child) => Directionality(
+              textDirection: TextDirection.rtl,
+              child: MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(app.settings.appFontScale)),
+                child: Stack(
+                  children: [
+                    child!,
+                    _FirebaseStatusBanner(error: firebaseInitError),
+                  ],
+                ),
+              ),
+            ),
+            home: app.loading
+                ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+                : app.initError != null
+                    ? Scaffold(
+                        body: SafeArea(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.error_outline, color: Colors.red, size: 56),
+                                const SizedBox(height: 16),
+                                const Text(
+                                  'حدث خطأ أثناء بدء التطبيق',
+                                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  app.initError!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.black54),
+                                ),
+                                const SizedBox(height: 24),
+                                ElevatedButton(
+                                  onPressed: () => app.init(),
+                                  child: const Text('إعادة المحاولة'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )
+                    : app.currentUser == null
+                        ? const LoginScreen()
+                        : const AppGate(),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// شريط تشخيصي مؤقت أعلى الشاشة يؤكد بصريًا نجاح/فشل الاتصال بـ Firebase
+/// عند إقلاع التطبيق — بديل عن قراءة سجلات الجهاز (logcat) غير المتاحة
+/// بدون كمبيوتر. اضغط عليه لإخفائه. يُحذف من الكود بعد التأكد من نجاح
+/// الربط والانتقال لاستخدام Firestore/Auth فعليًا.
+class _FirebaseStatusBanner extends StatefulWidget {
+  final String? error;
+  const _FirebaseStatusBanner({required this.error});
+
+  @override
+  State<_FirebaseStatusBanner> createState() => _FirebaseStatusBannerState();
+}
+
+class _FirebaseStatusBannerState extends State<_FirebaseStatusBanner> {
+  bool _dismissed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_dismissed) return const SizedBox.shrink();
+    final hasError = widget.error != null;
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        bottom: false,
+        child: Material(
+          color: hasError ? Colors.red.shade700 : Colors.green.shade700,
+          child: InkWell(
+            onTap: () => setState(() => _dismissed = true),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(
+                    hasError ? Icons.cloud_off : Icons.cloud_done,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      hasError ? widget.error! : 'متصل بـ Firebase ✓ (اضغط لإخفاء)',
+                      style: const TextStyle(color: Colors.white, fontSize: 11),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// يتحقق من وجود كلمة مرور مفعّلة قبل عرض التطبيق
+class AppGate extends StatefulWidget {
+  const AppGate({super.key});
+
+  @override
+  State<AppGate> createState() => _AppGateState();
+}
+
+class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
+  bool? _needsUnlock;
+  String? _error;
+  DateTime? _pausedAt;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _check();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      _pausedAt ??= DateTime.now();
+      return;
+    }
+    final pausedAt = _pausedAt;
+    _pausedAt = null;
+    if (pausedAt != null) _maybeLock(pausedAt);
+  }
+
+  Future<void> _maybeLock(DateTime pausedAt) async {
+    final isSet = await AuthService.instance.isPasswordSet();
+    if (!isSet || !mounted) return;
+    final settings = context.read<AppProvider>().settings;
+    final threshold = effectiveLockDuration(settings);
+    if (threshold == null) return;
+    if (DateTime.now().difference(pausedAt) >= threshold) {
+      if (mounted) setState(() => _needsUnlock = true);
+    }
+  }
+
+  Future<void> _check() async {
+    try {
+      final set = await AuthService.instance.isPasswordSet();
+      if (mounted) setState(() => _needsUnlock = set);
+    } catch (e) {
+      debugPrint('AppGate._check() failed: $e');
+      if (mounted) setState(() => _error = e.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_error != null) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text('خطأ: $_error', textAlign: TextAlign.center),
+          ),
+        ),
+      );
+    }
+    if (_needsUnlock == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (_needsUnlock == true) {
+      return LockScreen(onUnlocked: () => setState(() => _needsUnlock = false));
+    }
+    final role = context.watch<AppProvider>().currentUser?.role;
+    return PrivacyCoverOverlay(
+      child: role == UserRole.manager ? const ManagerRootNav() : const RootNav(),
+    );
+  }
+}
+
+/// شريط تنقّل سفلي + سحب أفقي على نفس الصفحات: من الرئيسية، السحب
+/// لليمين ينقل للعملاء ثم المنتجات (وصولًا للتقارير)، والسحب لليسار
+/// يفتح الإعدادات كصفحة جانبية لا تظهر بشريط التنقل نفسه. كل ذلك عبر
+/// PageController واحد متزامن مع NavigationBar، فلمس أي وسيلة يحرّك
+/// الأخرى تلقائيًا
+class RootNav extends StatefulWidget {
+  const RootNav({super.key});
+
+  @override
+  State<RootNav> createState() => _RootNavState();
+}
+
+class _RootNavState extends State<RootNav> {
+  // ترتيب الصفحات بالفهرس: 0=الإعدادات (سحب يسارًا فقط، بلا زر بالشريط)
+  // 1=الرئيسية (البداية) 2=العملاء 3=المنتجات 4=التقارير
+  static const int _homeIndex = 1;
+
+  final PageController _controller = PageController(initialPage: _homeIndex);
+  int _pageIndex = _homeIndex;
+
+  final _pages = const [
+    SettingsScreen(),
+    HomeScreen(),
+    CustomersScreen(),
+    ProductsScreen(),
+    ReportsScreen(),
+  ];
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _goToNavIndex(int navIndex) {
+    _controller.animateToPage(
+      navIndex + 1,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // شريط التنقل السفلي يعرض نفس الوجهات الأربع القديمة فقط؛ الإعدادات
+    // مقصودة أن تبقى مخصّصة للسحب حتى لا يتكرر الوصول لها بطريقتين
+    final navIndex = (_pageIndex - 1).clamp(0, 3);
+    return Scaffold(
+      body: PageView(
+        controller: _controller,
+        onPageChanged: (i) => setState(() => _pageIndex = i),
+        children: _pages,
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: navIndex,
+        onDestinationSelected: _goToNavIndex,
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.home), label: 'الرئيسية'),
+          NavigationDestination(icon: Icon(Icons.people), label: 'العملاء'),
+          NavigationDestination(icon: Icon(Icons.inventory_2), label: 'المنتجات'),
+          NavigationDestination(icon: Icon(Icons.bar_chart), label: 'التقارير'),
+        ],
+      ),
+    );
+  }
+}
