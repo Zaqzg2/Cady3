@@ -4,18 +4,24 @@ import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/db_service.dart';
 import '../services/sync_service.dart';
+import '../services/backup_service.dart';
 import '../theme/app_theme.dart';
-import '../widgets/sync/sync_channel_card.dart';
 import '../widgets/sync/sync_hero_card.dart';
+import '../widgets/sync/sync_channel_card.dart';
 import '../widgets/sync/sync_pulse.dart';
+import '../widgets/sync/sync_section_header.dart';
+import '../widgets/sync/sync_attention_banner.dart';
+import '../widgets/sync/sync_activity_tile.dart';
+import '../widgets/sync/backup_preview_card.dart';
 import 'sync_outbox_inbox_screen.dart';
 import 'sync_pending_preview_screen.dart';
+import 'backup_management_screen.dart';
 
-/// شاشة المزامنة عند المندوب — مركز مزامنة موحّد: بطاقة حالة رئيسية تجيب
-/// بلمحة "هل بياناتي آمنة، وماذا أفعل الآن"، ثم بطاقتا القناتين
-/// (فايربيس التلقائي، والملف اليدوي)، فبيانات المندوب والوصول التفصيلي.
-/// دفع منتجات/أسعار جديدة من المدير سيُضاف مع شاشة "إنشاء تحديث" عنده
-/// (مرحلة قادمة)
+/// شاشة "مركز المزامنة" لجانب المندوب: بطاقة حالة رئيسية، إجراءات سريعة،
+/// قناتا فايربيس واليدوي، معاينة صندوقَي الاستلام/الإرسال، معاينة النسخ
+/// الاحتياطية، وأخيرًا نشاط حقيقي مبني من سجلّي الصادر والوارد الفعليين —
+/// لا عدّاد ولا حالة هنا إلا ولها بيانات صادقة تسندها (لا توجد مثلاً حالة
+/// "تحديث بانتظار الاعتماد" لأن جهاز المندوب لا يملك أصلًا معرفة كهذه)
 class SyncScreen extends StatefulWidget {
   const SyncScreen({super.key});
 
@@ -25,8 +31,10 @@ class SyncScreen extends StatefulWidget {
 
 class _SyncScreenState extends State<SyncScreen> {
   PendingSummary? _pendingSummary;
-  bool _loadingCount = true;
-  ({String json, String fileName, DateTime at})? _lastExport;
+  List<OutboxRecord> _outbox = [];
+  List<InboxRecord> _inbox = [];
+  List<BackupRecord> _backups = [];
+  bool _loading = true;
   bool _busy = false;
   String? _lastError;
   Future<void> Function()? _lastAction;
@@ -37,340 +45,634 @@ class _SyncScreenState extends State<SyncScreen> {
     _refresh();
   }
 
+  Future<void> _refresh() async {
+    setState(() => _loading = true);
+    final app = context.read<AppProvider>();
+    try {
+      final summary = await app.getPendingSyncSummary();
+      final outbox = await app.listSyncOutbox();
+      final inbox = await app.listSyncInbox();
+      final backups = await BackupService.instance.listBackups();
+      if (!mounted) return;
+      setState(() {
+        _pendingSummary = summary;
+        _outbox = outbox;
+        _inbox = inbox;
+        _backups = backups;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
   int get _pendingCount => _pendingSummary?.total ?? 0;
 
-  Future<void> _refresh() async {
-    setState(() => _loadingCount = true);
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() {
+      _busy = true;
+      _lastError = null;
+      _lastAction = action;
+    });
+    try {
+      await action();
+      if (!mounted) return;
+      await _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _lastError = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _syncFirebaseNow() => _run(() async {
+        final msg = await DbService.instance.pullFromFirestore(isManager: false);
+        if (!mounted) return;
+        await context.read<AppProvider>().refreshCustomersAndProducts();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      });
+
+  Future<void> _export() => _run(() async {
+        await context.read<AppProvider>().exportPendingData();
+      });
+
+  Future<void> _importIncoming() => _run(() async {
+        final app = context.read<AppProvider>();
+        final content = await app.pickSyncAckFile();
+        if (content == null) return;
+        final result = await app.importIncomingSyncFile(content);
+        if (!mounted) return;
+        final msg = result.type == 'sync_ack'
+            ? 'تم تأكيد مزامنة ${result.ackedCount} سجل'
+            : 'تم استيراد ${result.productsUpdated} منتج و${result.customersUpdated} عميل';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      });
+
+  Future<void> _editDeviceName() async {
     final app = context.read<AppProvider>();
-    final summary = await app.getPendingSyncSummary();
-    final last = await app.getLastExport();
-    if (!mounted) return;
-    setState(() {
-      _pendingSummary = summary;
-      _lastExport = last;
-      _loadingCount = false;
-    });
-  }
-
-  Future<void> _export() async {
-    _lastAction = _export;
-    if (_pendingCount == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('لا توجد بيانات جديدة لتصديرها الآن')));
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _lastError = null;
-    });
-    try {
-      await context.read<AppProvider>().exportPendingData();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('تم إنشاء ملف المزامنة ومشاركته')));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _lastError = 'تعذّر التصدير: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-      _refresh();
-    }
-  }
-
-  Future<void> _reExport() async {
-    _lastAction = _reExport;
-    setState(() {
-      _busy = true;
-      _lastError = null;
-    });
-    try {
-      final ok = await context.read<AppProvider>().reExportLastSync();
-      if (!mounted) return;
-      if (!ok) {
-        setState(() => _lastError = 'لا يوجد ملف سابق لإعادة إرساله');
-      } else {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('تمت إعادة مشاركة آخر ملف')));
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _lastError = 'تعذّر إعادة الإرسال: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _importIncoming() async {
-    _lastAction = _importIncoming;
-    final app = context.read<AppProvider>();
-    setState(() {
-      _busy = true;
-      _lastError = null;
-    });
-    try {
-      final content = await app.pickSyncAckFile();
-      if (content == null) {
-        if (mounted) setState(() => _busy = false);
-        return;
-      }
-      final result = await app.importIncomingSyncFile(content);
-      if (!mounted) return;
-      final msg = result.type == 'sync_ack'
-          ? 'تم تأكيد ${result.ackedCount} عملية كمتزامنة'
-          : 'تم التحديث: ${result.productsUpdated} منتج، ${result.customersUpdated} عميل'
-              '${result.settingsUpdated ? '، وبيانات الشركة' : ''}';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _lastError = 'تعذّر الاستيراد: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-      _refresh();
-    }
-  }
-
-  Future<void> _syncFirebaseNow() async {
-    _lastAction = _syncFirebaseNow;
-    setState(() {
-      _busy = true;
-      _lastError = null;
-    });
-    try {
-      final message = await DbService.instance.pullFromFirestore(isManager: false);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _lastError = 'تعذّر الوصول لفايربيس: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-      _refresh();
-    }
-  }
-
-  Future<void> _editDeviceName(String current) async {
-    final ctrl = TextEditingController(text: current);
-    final result = await showDialog<String>(
+    final controller = TextEditingController(text: app.currentUser?.deviceName ?? '');
+    final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('اسم الجهاز'),
         content: TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
+          controller: controller,
           autofocus: true,
+          decoration: const InputDecoration(hintText: 'مثال: جوال أحمد'),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء')),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('حفظ')),
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('حفظ'),
+          ),
         ],
       ),
     );
-    if (result != null && result.trim().isNotEmpty && mounted) {
-      await context.read<AppProvider>().updateCurrentDeviceName(result.trim());
-      if (mounted) setState(() {});
+    if (name == null || name.isEmpty) return;
+    await app.updateCurrentDeviceName(name);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _shareBackup(BackupRecord r) async {
+    setState(() => _busy = true);
+    try {
+      await BackupService.instance.shareBackup(r);
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
-  String _formatDate(DateTime? d) {
-    if (d == null) return 'لم تتم أي مزامنة بعد';
-    final now = DateTime.now();
-    final sameDay = d.year == now.year && d.month == now.month && d.day == now.day;
-    final time = '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
-    if (sameDay) return 'اليوم $time';
-    final yesterday = now.subtract(const Duration(days: 1));
-    final wasYesterday =
-        d.year == yesterday.year && d.month == yesterday.month && d.day == yesterday.day;
-    if (wasYesterday) return 'أمس $time';
-    return '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')} $time';
+  Future<void> _restoreBackup(BackupRecord r) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('استعادة نسخة احتياطية'),
+        content: const Text(
+            'سيتم دمج بيانات هذه النسخة مع البيانات الحالية على هذا الجهاز، بدون حذف أي شيء موجود. هل تريد المتابعة؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('استعادة')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busy = true);
+    try {
+      await BackupService.instance.restoreBackup(r);
+      if (!mounted) return;
+      await context.read<AppProvider>().refreshCustomersAndProducts();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تمت الاستعادة بنجاح')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('تعذّرت الاستعادة: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
-  String _pendingBreakdownText(PendingSummary s) {
+  String _relativeTime(DateTime d) {
+    final diff = DateTime.now().difference(d);
+    if (diff.inMinutes < 1) return 'الآن';
+    if (diff.inMinutes < 60) return 'منذ ${diff.inMinutes} د';
+    if (diff.inHours < 24) return 'منذ ${diff.inHours} س';
+    return 'منذ ${diff.inDays} يوم';
+  }
+
+  String _shortTime(DateTime d) =>
+      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+  String _pendingBreakdown() {
+    final s = _pendingSummary;
+    if (s == null) return '';
     final parts = <String>[];
     if (s.invoices.isNotEmpty) parts.add('${s.invoices.length} فاتورة');
     if (s.receipts.isNotEmpty) parts.add('${s.receipts.length} سند');
     if (s.customers.isNotEmpty) parts.add('${s.customers.length} عميل');
     if (s.products.isNotEmpty) parts.add('${s.products.length} منتج');
-    if (parts.isEmpty) return 'لا توجد بيانات جديدة';
-    return '${parts.join('، ')} بانتظار التصدير';
-  }
-
-  SyncPulseState get _pulseState {
-    if (_busy) return SyncPulseState.syncing;
-    if (_lastError != null) return SyncPulseState.failed;
-    if (_pendingCount > 0) return SyncPulseState.pending;
-    return SyncPulseState.synced;
+    return parts.isEmpty ? '' : parts.join(' - ');
   }
 
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppProvider>();
     final rep = app.currentUser;
-    final state = _pulseState;
 
-    String title = '';
-    String subtitle = '';
-    String? ctaLabel;
-    SyncHeroCta ctaKind = SyncHeroCta.solid;
-    VoidCallback? onCta;
-
-    switch (state) {
-      case SyncPulseState.syncing:
-        title = 'جارٍ التنفيذ';
-        subtitle = 'برجاء الانتظار حتى تكتمل العملية';
-        break;
-      case SyncPulseState.failed:
-        title = 'حدثت مشكلة';
-        subtitle = _lastError ?? 'تعذّرت آخر عملية';
-        ctaLabel = 'إعادة المحاولة';
-        ctaKind = SyncHeroCta.danger;
-        onCta = () => _lastAction?.call();
-        break;
-      case SyncPulseState.pending:
-        title = 'لديك $_pendingCount عملية لم تُرسل بعد';
-        subtitle = _loadingCount
-            ? 'جارٍ الحساب...'
-            : '${_pendingBreakdownText(_pendingSummary!)} · آخر مزامنة ${_formatDate(rep?.lastSyncAt)}';
-        ctaLabel = 'تصدير وإرسال الآن';
-        onCta = _busy ? null : _export;
-        break;
-      case SyncPulseState.synced:
-        title = 'بياناتك بأمان';
-        subtitle = 'كل الفواتير والسندات مُرسلة · آخر مزامنة ${_formatDate(rep?.lastSyncAt)}';
-        ctaLabel = 'تحقّق من التحديثات';
-        ctaKind = SyncHeroCta.ghost;
-        onCta = _busy ? null : _importIncoming;
-        break;
-    }
+    final state = _busy
+        ? SyncPulseState.syncing
+        : (_lastError != null
+            ? SyncPulseState.failed
+            : (_pendingCount > 0 ? SyncPulseState.pending : SyncPulseState.synced));
 
     return Scaffold(
       appBar: AppBar(title: const Text('مركز المزامنة')),
-      body: RefreshIndicator(
-        onRefresh: _syncFirebaseNow,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            SyncHeroCard(
-              state: state,
-              progress: null,
-              centerLabel: '$_pendingCount',
-              title: title,
-              subtitle: subtitle,
-              ctaLabel: ctaLabel,
-              ctaKind: ctaKind,
-              onCtaPressed: onCta,
-              onTap: _pendingCount > 0
-                  ? () => Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => const SyncPendingPreviewScreen()))
-                  : null,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: SyncChannelCard(
-                    icon: Icons.cloud_outlined,
-                    iconColor: AppTheme.syncSuccess,
-                    title: 'فايربيس',
-                    line1: 'يُرفع تلقائيًا بالخلفية',
-                    infoText:
-                        'بياناتك تُرفع لفايربيس تلقائيًا في الخلفية فور حفظ أي فاتورة أو سند، دون أي إجراء منك.',
-                    quickActions: [
-                      SyncQuickAction(
-                        icon: Icons.sync,
-                        label: 'مزامنة فايربيس الآن',
-                        onPressed: _busy ? () {} : _syncFirebaseNow,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: SyncChannelCard(
-                    icon: Icons.folder_zip_outlined,
-                    iconColor: AppTheme.syncPending,
-                    title: 'يدوي (ملف)',
-                    line1: _lastExport == null
-                        ? 'لم يُصدَّر بعد'
-                        : 'آخر إرسال ${_formatDate(_lastExport!.at)}',
-                    infoText:
-                        'قناة احتياطية تعمل حتى بدون إنترنت — تُصدّر ملفًا وترسله للمدير، ويرد عليك بملف اعتماد.',
-                    onTap: () => Navigator.push(context,
-                        MaterialPageRoute(builder: (_) => const SyncOutboxInboxScreen())),
-                    quickActions: [
-                      SyncQuickAction(
-                        icon: Icons.file_upload_outlined,
-                        label: 'تصدير وإرسال الآن',
-                        onPressed: _busy ? () {} : _export,
-                      ),
-                      if (_lastExport != null)
-                        SyncQuickAction(
-                          icon: Icons.refresh,
-                          label: 'إعادة إرسال آخر ملف',
-                          onPressed: _busy ? () {} : _reExport,
-                        ),
-                      SyncQuickAction(
-                        icon: Icons.file_download_outlined,
-                        label: 'استيراد تحديثات',
-                        onPressed: _busy ? () {} : _importIncoming,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
                 padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('بيانات المندوب',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                    const SizedBox(height: 10),
-                    _InfoRow(
-                        label: 'رقم المندوب',
-                        value: (rep != null && rep.repNumber.isNotEmpty) ? rep.repNumber : '—'),
-                    _InfoRow(label: 'اسم المندوب', value: rep?.displayName ?? '—'),
-                    _InfoRow(
-                      label: 'اسم الجهاز',
-                      value: (rep != null && rep.deviceName.isNotEmpty)
-                          ? rep.deviceName
-                          : 'غير محدد',
-                      onEdit: rep == null ? null : () => _editDeviceName(rep.deviceName),
+                children: [
+                  SyncHeroCard(
+                    state: state,
+                    title: _busy
+                        ? 'جارِ التنفيذ...'
+                        : (_lastError != null
+                            ? 'حدثت مشكلة'
+                            : (_pendingCount > 0
+                                ? 'لديك عمليات بانتظار الإرسال'
+                                : 'كل شيء متزامن')),
+                    subtitle: _lastError != null
+                        ? _lastError!
+                        : (_pendingCount > 0
+                            ? '$_pendingCount عملية لم تُرسَل بعد'
+                            : (rep?.lastSyncAt != null
+                                ? 'آخر مزامنة ${_relativeTime(rep!.lastSyncAt!)}'
+                                : 'لم تتم أي مزامنة بعد')),
+                    centerLabel: _pendingCount > 0 ? '$_pendingCount' : null,
+                    ctaLabel: _lastError != null
+                        ? 'إعادة المحاولة'
+                        : (_pendingCount > 0 ? 'إرسال الآن' : null),
+                    ctaKind: _lastError != null ? SyncHeroCta.danger : SyncHeroCta.solid,
+                    onCtaPressed: _busy
+                        ? null
+                        : (_lastError != null ? () => _run(_lastAction!) : _export),
+                    onTap: _pendingCount > 0
+                        ? () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const SyncPendingPreviewScreen()),
+                            )
+                        : null,
+                  ),
+                  const SizedBox(height: 18),
+
+                  const SyncSectionHeader(title: 'إجراءات سريعة'),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _QuickAction(
+                          icon: Icons.sync,
+                          color: AppTheme.syncSuccess,
+                          label: 'مزامنة الآن',
+                          onTap: _busy ? null : _syncFirebaseNow,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _QuickAction(
+                          icon: Icons.file_download_outlined,
+                          color: Theme.of(context).colorScheme.tertiary,
+                          label: 'استيراد',
+                          onTap: _busy ? null : _importIncoming,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _QuickAction(
+                          icon: Icons.file_upload_outlined,
+                          color: Theme.of(context).colorScheme.secondary,
+                          label: 'تصدير',
+                          onTap: (_busy || _pendingCount == 0) ? null : _export,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _QuickAction(
+                          icon: Icons.folder_zip_outlined,
+                          color: AppTheme.syncPending,
+                          label: 'المزامنة اليدوية',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SyncOutboxInboxScreen()),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: SyncChannelCard(
+                          icon: Icons.cloud_outlined,
+                          iconColor: AppTheme.syncSuccess,
+                          title: 'Firebase',
+                          line1: 'يُرفع تلقائيًا بالخلفية',
+                          dotColor: AppTheme.syncSuccess,
+                          infoText:
+                              'كل حفظ لفاتورة أو سند أو عميل أو منتج يُرفع تلقائيًا لفايربيس بالخلفية دون أي إجراء منك. اضغط "مزامنة الآن" لسحب آخر ما حدّثه المدير فورًا بدل انتظار الرفع التلقائي.',
+                          quickActions: [
+                            SyncQuickAction(
+                              icon: Icons.sync,
+                              label: 'مزامنة الآن',
+                              onPressed: _syncFirebaseNow,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: SyncChannelCard(
+                          icon: Icons.folder_zip_outlined,
+                          iconColor: AppTheme.syncPending,
+                          title: 'يدوي (ملف)',
+                          line1: 'بلا إنترنت',
+                          infoText:
+                              'يبني ملف JSON بكل عملياتك المعلّقة لمشاركته مع المدير عبر واتساب أو بلوتوث أو أي وسيلة أخرى، أو يستورد ملف تأكيد أو تحديث وصلك منه.',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SyncOutboxInboxScreen()),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  SyncSectionHeader(
+                    title: 'صندوق المزامنة اليدوية',
+                    actionLabel: 'عرض الكل',
+                    onAction: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const SyncOutboxInboxScreen()),
                     ),
-                    _InfoRow(label: 'إصدار قاعدة البيانات', value: '${DbService.schemaVersion}'),
-                    _InfoRow(label: 'رقم آخر تحديث مستورد', value: '— (قريبًا)'),
+                  ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _MiniBoxCard(
+                          icon: Icons.inbox_outlined,
+                          color: AppTheme.syncSuccess,
+                          title: 'صندوق الاستلام',
+                          badge: _inbox.isEmpty ? null : '${_inbox.length}',
+                          subtitle: _inbox.isEmpty ? 'لا يوجد شيء بعد' : _inbox.first.summary,
+                          caption:
+                              _inbox.isEmpty ? '—' : _relativeTime(_inbox.first.receivedAt),
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SyncOutboxInboxScreen()),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _MiniBoxCard(
+                          icon: Icons.outbox_outlined,
+                          color:
+                              _pendingCount > 0 ? AppTheme.syncPending : AppTheme.syncSuccess,
+                          title: 'صندوق الإرسال',
+                          badge: _pendingCount > 0 ? '$_pendingCount' : null,
+                          subtitle: _pendingCount > 0
+                              ? _pendingBreakdown()
+                              : (_outbox.isEmpty ? 'لا يوجد شيء بعد' : 'كل شيء أُرسل'),
+                          caption: _pendingCount > 0
+                              ? 'بانتظار الإرسال'
+                              : (_outbox.isEmpty ? '—' : _relativeTime(_outbox.first.createdAt)),
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const SyncPendingPreviewScreen()),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  SyncSectionHeader(
+                    title: 'النسخ الاحتياطية',
+                    actionLabel: 'عرض الكل',
+                    onAction: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const BackupManagementScreen()),
+                    ),
+                  ),
+                  if (_backups.isEmpty)
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: ListTile(
+                        leading: const Icon(Icons.archive_outlined),
+                        title: const Text('لا توجد نسخة احتياطية بعد'),
+                        subtitle: const Text('يمكنك إنشاء أول نسخة من هذه الشاشة'),
+                        trailing: const Icon(Icons.chevron_left),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const BackupManagementScreen()),
+                        ),
+                      ),
+                    )
+                  else
+                    Column(
+                      children: [
+                        for (int i = 0; i < _backups.length && i < 2; i++) ...[
+                          if (i > 0) const SizedBox(height: 8),
+                          BackupPreviewCard(
+                            record: _backups[i],
+                            busy: _busy,
+                            onShare: () => _shareBackup(_backups[i]),
+                            onRestore: () => _restoreBackup(_backups[i]),
+                          ),
+                        ],
+                      ],
+                    ),
+                  const SizedBox(height: 20),
+
+                  if (rep != null && rep.deviceName.trim().isEmpty) ...[
+                    SyncAttentionBanner(
+                      title: 'يحتاج انتباهك',
+                      lines: const [
+                        'لم تحدّد اسم الجهاز بعد — يساعد المدير على تمييز جهازك عند وصول ملفاتك'
+                      ],
+                      ctaLabel: 'تحديد الاسم الآن',
+                      onCta: _editDeviceName,
+                    ),
+                    const SizedBox(height: 20),
                   ],
+
+                  const SyncSectionHeader(title: 'النشاط الأخير'),
+                  ..._buildActivity(),
+
+                  const SizedBox(height: 20),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('بيانات المندوب',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const SizedBox(height: 10),
+                          _InfoRow('رقم المندوب',
+                              (rep?.repNumber.isNotEmpty == true) ? rep!.repNumber : '—'),
+                          _InfoRow('الاسم', rep?.displayName ?? '—'),
+                          InkWell(
+                            onTap: _editDeviceName,
+                            child: _InfoRow(
+                              'اسم الجهاز',
+                              (rep?.deviceName.isNotEmpty == true)
+                                  ? rep!.deviceName
+                                  : 'غير محدد (اضغط للتعديل)',
+                              trailing: const Icon(Icons.edit_outlined, size: 16),
+                            ),
+                          ),
+                          _InfoRow('إصدار قاعدة البيانات', '${DbService.schemaVersion}'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  List<Widget> _buildActivity() {
+    final items = <_ActivityEntry>[];
+    for (final r in _outbox) {
+      final parts = <String>[];
+      if (r.invoicesCount > 0) parts.add('${r.invoicesCount} فاتورة');
+      if (r.receiptsCount > 0) parts.add('${r.receiptsCount} سند');
+      if (r.customersCount > 0) parts.add('${r.customersCount} عميل');
+      if (r.productsCount > 0) parts.add('${r.productsCount} منتج');
+      items.add(_ActivityEntry(
+        time: r.createdAt,
+        icon: Icons.upload_outlined,
+        iconColor: AppTheme.syncSuccess,
+        title: 'تصدير وإرسال البيانات',
+        subtitle: parts.isEmpty ? r.fileName : parts.join(' - '),
+        badgeText: 'ناجح',
+        badgeColor: AppTheme.syncSuccess,
+      ));
+    }
+    for (final r in _inbox) {
+      final isAck = r.type == 'sync_ack';
+      items.add(_ActivityEntry(
+        time: r.receivedAt,
+        icon: isAck ? Icons.verified_outlined : Icons.inventory_2_outlined,
+        iconColor: AppTheme.syncSuccess,
+        title: isAck ? 'تأكيد مزامنة من المدير' : 'تحديث من المدير',
+        subtitle: r.summary,
+        badgeText: 'ناجح',
+        badgeColor: AppTheme.syncSuccess,
+      ));
+    }
+    items.sort((a, b) => b.time.compareTo(a.time));
+
+    if (items.isEmpty) {
+      return [
+        Card(
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('لا يوجد نشاط بعد', style: TextStyle(color: Colors.grey.shade600)),
+          ),
+        ),
+      ];
+    }
+
+    return [
+      Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Column(
+            children: [
+              for (final e in items.take(6))
+                SyncActivityTile(
+                  time: _shortTime(e.time),
+                  icon: e.icon,
+                  iconColor: e.iconColor,
+                  title: e.title,
+                  subtitle: e.subtitle,
+                  badgeText: e.badgeText,
+                  badgeColor: e.badgeColor,
+                ),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+}
+
+class _ActivityEntry {
+  final DateTime time;
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final String badgeText;
+  final Color badgeColor;
+  _ActivityEntry({
+    required this.time,
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.badgeText,
+    required this.badgeColor,
+  });
+}
+
+class _QuickAction extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  final VoidCallback? onTap;
+  const _QuickAction(
+      {required this.icon, required this.color, required this.label, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final disabled = onTap == null;
+    return Material(
+      color: Theme.of(context).cardColor,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Theme.of(context).dividerColor.withOpacity(0.5)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration:
+                    BoxDecoration(shape: BoxShape.circle, color: color.withOpacity(0.12)),
+                child: Icon(icon, color: disabled ? Colors.grey : color, size: 19),
+              ),
+              const SizedBox(height: 7),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: disabled ? Colors.grey : null,
                 ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.visibility_outlined),
-                title: const Text('معاينة العمليات المعلّقة'),
-                subtitle: _loadingCount
-                    ? const Text('جارٍ الحساب...')
-                    : Text('$_pendingCount عملية بانتظار المزامنة'),
-                trailing: const Icon(Icons.chevron_left),
-                onTap: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const SyncPendingPreviewScreen())),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniBoxCard extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String? badge;
+  final String subtitle;
+  final String caption;
+  final VoidCallback onTap;
+  const _MiniBoxCard({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.badge,
+    required this.subtitle,
+    required this.caption,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Icon(icon, color: color, size: 19),
+                  if (badge != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                          color: color.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(99)),
+                      child: Text(badge!,
+                          style: TextStyle(
+                              fontSize: 10.5, fontWeight: FontWeight.bold, color: color)),
+                    ),
+                ],
               ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.file_download_outlined),
-                title: const Text('استيراد تحديثات'),
-                subtitle: const Text('تأكيد مزامنة أو تحديث منتجات/عملاء من المدير'),
-                trailing: const Icon(Icons.chevron_left),
-                onTap: _busy ? null : _importIncoming,
-              ),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+              const SizedBox(height: 3),
+              Text(subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+              const SizedBox(height: 4),
+              Text(caption, style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+            ],
+          ),
         ),
       ),
     );
@@ -380,26 +682,20 @@ class _SyncScreenState extends State<SyncScreen> {
 class _InfoRow extends StatelessWidget {
   final String label;
   final String value;
-  final VoidCallback? onEdit;
-  const _InfoRow({required this.label, required this.value, this.onEdit});
+  final Widget? trailing;
+  const _InfoRow(this.label, this.value, {this.trailing});
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
           Expanded(
-              child: Text(label,
-                  style: TextStyle(color: Colors.grey.shade600, fontSize: 13))),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
-          if (onEdit != null) ...[
-            const SizedBox(width: 4),
-            InkWell(
-              onTap: onEdit,
-              child: Icon(Icons.edit_outlined, size: 16, color: Colors.grey.shade500),
-            ),
-          ],
+              child:
+                  Text(label, style: TextStyle(color: Colors.grey.shade600, fontSize: 13))),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          if (trailing != null) ...[const SizedBox(width: 4), trailing!],
         ],
       ),
     );

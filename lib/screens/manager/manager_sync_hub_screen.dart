@@ -1,33 +1,34 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'manager_import_screen.dart';
-import 'manager_export_screen.dart';
-import 'manager_sync_log_screen.dart';
-import 'manager_live_activity_screen.dart';
 import '../../providers/app_provider.dart';
 import '../../services/db_service.dart';
+import '../../services/sync_service.dart';
 import '../../services/manager_sync_service.dart';
+import '../../services/backup_service.dart';
 import '../../models/user_account.dart';
 import '../../models/sync_log_entry.dart';
 import '../../models/export_log_entry.dart';
 import '../../theme/app_theme.dart';
-import '../../widgets/sync/sync_channel_card.dart';
 import '../../widgets/sync/sync_hero_card.dart';
+import '../../widgets/sync/sync_channel_card.dart';
 import '../../widgets/sync/sync_pulse.dart';
+import '../../widgets/sync/sync_section_header.dart';
+import '../../widgets/sync/sync_attention_banner.dart';
+import '../../widgets/sync/sync_activity_tile.dart';
+import '../../widgets/sync/backup_preview_card.dart';
+import '../backup_management_screen.dart';
+import 'manager_import_screen.dart';
+import 'manager_export_screen.dart';
+import 'manager_sync_log_screen.dart';
+import 'manager_live_activity_screen.dart';
+import 'manager_users_screen.dart';
 
-class _SyncActivity {
-  final DateTime time;
-  final String text;
-  final bool hasError;
-  const _SyncActivity({required this.time, required this.text, required this.hasError});
-}
-
-/// مركز المزامنة عند المدير: عرض مباشر من Firestore (تلقائي، يحتاج نت)
-/// + مزامنة بالنت يدوية (تسحب فورًا بدون تسجيل خروج/دخول)
-/// + استيراد/تصدير يدوي عبر JSON (يشتغل حتى بدون نت لأي طرف). بطاقة
-/// الحالة الرئيسية والقناتان إضافة فوق نفس الوجهات الخمس القديمة —
-/// موجودة كلها بالأسفل صراحةً، ما انحذف شيء
+/// شاشة "مركز العمليات" لجانب المدير: بطاقة حالة فايربيس الرئيسية، أربع
+/// بطاقات أرقام حقيقية، حالة المندوبين (مبنية من lastSyncAt الفعلي —
+/// وليس من عدّ عمليات معلّقة لا يملك جهاز المدير معرفة صادقة بها أصلًا)،
+/// شبكة المزامنة اليدوية، معاينة النسخ الاحتياطية، ونشاط أخير مدمَج من
+/// سجلّي الاستيراد والتصدير الحقيقيين
 class ManagerSyncHubScreen extends StatefulWidget {
   const ManagerSyncHubScreen({super.key});
 
@@ -36,277 +37,731 @@ class ManagerSyncHubScreen extends StatefulWidget {
 }
 
 class _ManagerSyncHubScreenState extends State<ManagerSyncHubScreen> {
-  bool _syncing = false;
+  List<SyncLogEntry> _importLog = [];
+  List<ExportLogEntry> _exportLog = [];
+  List<UserAccount> _reps = [];
+  List<BackupRecord> _backups = [];
+  PendingSummary? _pendingSummary;
+  bool _loading = true;
+  bool _busy = false;
   String? _lastError;
-  _SyncActivity? _activity;
-  bool _loadingActivity = true;
+  Future<void> Function()? _lastAction;
 
   @override
   void initState() {
     super.initState();
-    _loadActivity();
+    _refresh();
   }
 
-  Future<void> _loadActivity() async {
-    setState(() => _loadingActivity = true);
-    final imports = await ManagerSyncService.instance.getLog();
-    final exports = await ManagerSyncService.instance.getExportLog();
-
-    SyncLogEntry? latestImport;
-    for (final e in imports) {
-      if (latestImport == null || e.importedAt.isAfter(latestImport.importedAt)) {
-        latestImport = e;
-      }
+  Future<void> _refresh() async {
+    setState(() => _loading = true);
+    final app = context.read<AppProvider>();
+    try {
+      final importLog = await ManagerSyncService.instance.getLog();
+      final exportLog = await ManagerSyncService.instance.getExportLog();
+      final users = await app.getAllUsers();
+      final backups = await BackupService.instance.listBackups();
+      final pending = await app.getPendingSyncSummary();
+      if (!mounted) return;
+      setState(() {
+        _importLog = importLog;
+        _exportLog = exportLog;
+        _reps = users.where((u) => u.role == UserRole.rep).toList();
+        _backups = backups;
+        _pendingSummary = pending;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
     }
-    ExportLogEntry? latestExport;
-    for (final e in exports) {
-      if (latestExport == null || e.createdAt.isAfter(latestExport.createdAt)) {
-        latestExport = e;
-      }
-    }
-
-    _SyncActivity? result;
-    if (latestImport != null || latestExport != null) {
-      final importIsNewer = latestExport == null ||
-          (latestImport != null && latestImport.importedAt.isAfter(latestExport.createdAt));
-      if (importIsNewer && latestImport != null) {
-        result = _SyncActivity(
-          time: latestImport.importedAt,
-          text:
-              'استيراد من ${latestImport.repDisplayName.isNotEmpty ? latestImport.repDisplayName : 'مندوب'}',
-          hasError: latestImport.errorsCount > 0,
-        );
-      } else if (latestExport != null) {
-        result = _SyncActivity(
-          time: latestExport.createdAt,
-          text: 'تحديث أُرسل ← ${latestExport.targetLabel}',
-          hasError: false,
-        );
-      }
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _activity = result;
-      _loadingActivity = false;
-    });
   }
 
-  Future<void> _syncNow() async {
+  Future<void> _run(Future<void> Function() action) async {
     setState(() {
-      _syncing = true;
+      _busy = true;
       _lastError = null;
+      _lastAction = action;
     });
     try {
-      final isManager = context.read<AppProvider>().currentUser?.role == UserRole.manager;
-      final message = await DbService.instance.pullFromFirestore(isManager: isManager);
+      await action();
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(message), duration: const Duration(seconds: 4)));
+      await _refresh();
     } catch (e) {
       if (!mounted) return;
-      setState(() => _lastError = 'تعذّر الوصول لفايربيس: $e');
+      setState(() => _lastError = e.toString());
     } finally {
-      if (mounted) setState(() => _syncing = false);
-      _loadActivity();
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _syncNow() => _run(() async {
+        final msg = await DbService.instance.pullFromFirestore(isManager: true);
+        if (!mounted) return;
+        await context.read<AppProvider>().refreshCustomersAndProducts();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      });
+
+  Future<void> _shareBackup(BackupRecord r) async {
+    setState(() => _busy = true);
+    try {
+      await BackupService.instance.shareBackup(r);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _restoreBackup(BackupRecord r) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('استعادة نسخة احتياطية'),
+        content: const Text(
+            'سيتم دمج بيانات هذه النسخة مع البيانات الحالية على هذا الجهاز، بدون حذف أي شيء موجود. هل تريد المتابعة؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('استعادة')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busy = true);
+    try {
+      await BackupService.instance.restoreBackup(r);
+      if (!mounted) return;
+      await context.read<AppProvider>().refreshCustomersAndProducts();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تمت الاستعادة بنجاح')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('تعذّرت الاستعادة: $e')));
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
   String _relativeTime(DateTime d) {
-    final now = DateTime.now();
-    final diff = now.difference(d);
+    final diff = DateTime.now().difference(d);
     if (diff.inMinutes < 1) return 'الآن';
-    if (diff.inMinutes < 60) return 'قبل ${diff.inMinutes} دقيقة';
-    final sameDay = d.year == now.year && d.month == now.month && d.day == now.day;
-    if (sameDay) {
-      final time = '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
-      return 'اليوم $time';
-    }
-    final yesterday = now.subtract(const Duration(days: 1));
-    final wasYesterday =
-        d.year == yesterday.year && d.month == yesterday.month && d.day == yesterday.day;
-    if (wasYesterday) return 'أمس';
-    if (diff.inDays < 7) return 'قبل ${diff.inDays} يوم';
-    return '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
+    if (diff.inMinutes < 60) return 'منذ ${diff.inMinutes} د';
+    if (diff.inHours < 24) return 'منذ ${diff.inHours} س';
+    return 'منذ ${diff.inDays} يوم';
   }
 
-  SyncPulseState get _pulseState {
-    if (_syncing) return SyncPulseState.syncing;
-    if (_lastError != null) return SyncPulseState.failed;
-    return SyncPulseState.synced;
+  String _shortTime(DateTime d) =>
+      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+  int get _errorsTotal => _importLog.fold<int>(0, (sum, e) => sum + e.errorsCount);
+
+  int get _todayOpsCount {
+    final now = DateTime.now();
+    bool isToday(DateTime d) =>
+        d.year == now.year && d.month == now.month && d.day == now.day;
+    return _importLog.where((e) => isToday(e.importedAt)).length +
+        _exportLog.where((e) => isToday(e.createdAt)).length;
   }
 
-  void _goImport() => Navigator.push(
-      context, MaterialPageRoute(builder: (_) => const ManagerImportScreen()));
-  void _goExport() => Navigator.push(
-      context, MaterialPageRoute(builder: (_) => const ManagerExportScreen()));
-  void _goLog() => Navigator.push(
-      context, MaterialPageRoute(builder: (_) => const ManagerSyncLogScreen()));
-  void _goLive() => Navigator.push(
-      context, MaterialPageRoute(builder: (_) => const ManagerLiveActivityScreen()));
+  int get _pendingProductsCount => _pendingSummary?.products.length ?? 0;
+
+  int get _activeRepsCount => _reps.where((u) => u.isActive).length;
+
+  List<UserAccount> get _sortedReps {
+    final reps = List<UserAccount>.from(_reps);
+    reps.sort((a, b) {
+      if (a.lastSyncAt == null && b.lastSyncAt == null) return 0;
+      if (a.lastSyncAt == null) return 1;
+      if (b.lastSyncAt == null) return -1;
+      return b.lastSyncAt!.compareTo(a.lastSyncAt!);
+    });
+    return reps;
+  }
+
+  Color _repColor(UserAccount u) {
+    if (u.lastSyncAt == null) return Colors.grey;
+    final hours = DateTime.now().difference(u.lastSyncAt!).inHours;
+    if (hours < 24) return AppTheme.syncSuccess;
+    if (hours < 24 * 7) return AppTheme.syncPending;
+    return AppTheme.syncError;
+  }
+
+  String _repLabel(UserAccount u) {
+    if (u.lastSyncAt == null) return 'لم يُزامَن بعد';
+    final hours = DateTime.now().difference(u.lastSyncAt!).inHours;
+    if (hours < 24) return 'متزامن';
+    if (hours < 24 * 7) return 'يحتاج مزامنة';
+    return 'متأخر';
+  }
 
   @override
   Widget build(BuildContext context) {
-    final state = _pulseState;
+    final app = context.watch<AppProvider>();
+    final manager = app.currentUser;
 
-    String title = '';
-    String subtitle = '';
-    String? ctaLabel;
-    SyncHeroCta ctaKind = SyncHeroCta.solid;
-    VoidCallback? onCta;
+    final state = _busy
+        ? SyncPulseState.syncing
+        : (_lastError != null ? SyncPulseState.failed : SyncPulseState.synced);
 
-    switch (state) {
-      case SyncPulseState.syncing:
-        title = 'جارٍ السحب من فايربيس';
-        subtitle = 'يحدّث بيانات الفريق الآن';
-        break;
-      case SyncPulseState.failed:
-        title = 'تعذّرت آخر مزامنة';
-        subtitle = _lastError ?? 'حاول مرة أخرى';
-        ctaLabel = 'إعادة المحاولة';
-        ctaKind = SyncHeroCta.danger;
-        onCta = _syncing ? null : _syncNow;
-        break;
-      case SyncPulseState.pending:
-        break; // غير مُستخدَمة عند المدير — لا بيانات صادقة لعدّها
-      case SyncPulseState.synced:
-        title = 'فريقك متصل';
-        subtitle = _loadingActivity
-            ? 'جارٍ التحقّق من آخر نشاط...'
-            : (_activity == null
-                ? 'لم يصل أي ملف بعد — استورد أول ملف من مندوب'
-                : 'آخر نشاط: ${_activity!.text} · ${_relativeTime(_activity!.time)}');
-        ctaLabel = 'استيراد ملف مندوب';
-        ctaKind = SyncHeroCta.solid;
-        onCta = _goImport;
-        break;
+    final attentionLines = <String>[];
+    if (_errorsTotal > 0) {
+      attentionLines.add('$_errorsTotal خطأ مسجّل بعمليات استيراد سابقة');
+    }
+    if (_pendingProductsCount > 0) {
+      attentionLines.add('$_pendingProductsCount منتج لديك لم يُرفع لفايربيس بعد');
+    }
+    final staleReps = _sortedReps
+        .where((u) => u.lastSyncAt == null || DateTime.now().difference(u.lastSyncAt!).inDays >= 7)
+        .length;
+    if (staleReps > 0) {
+      attentionLines.add('$staleReps مندوب لم تتم مزامنة بياناته منذ أسبوع أو أكثر');
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('مركز المزامنة')),
-      body: RefreshIndicator(
-        onRefresh: _syncNow,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
+      appBar: AppBar(
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            SyncHeroCard(
-              state: state,
-              progress: null,
-              title: title,
-              subtitle: subtitle,
-              ctaLabel: ctaLabel,
-              ctaKind: ctaKind,
-              onCtaPressed: onCta,
-              onTap: _activity != null ? _goLog : null,
-            ),
-            const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: SyncChannelCard(
-                    icon: Icons.cloud_outlined,
-                    iconColor: AppTheme.syncSuccess,
-                    title: 'فايربيس',
-                    line1: 'يراقب الفريق مباشرة',
-                    infoText:
-                        'تراقب هذه القناة اتصال فايربيس بالفريق كامل، وتعكس آخر نشاط مباشر من كل مندوب.',
-                    quickActions: [
-                      SyncQuickAction(
-                          icon: Icons.sync, label: 'مزامنة الآن', onPressed: _syncing ? () {} : _syncNow),
-                      SyncQuickAction(
-                          icon: Icons.cloud_sync_outlined, label: 'نشاط مباشر', onPressed: _goLive),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: SyncChannelCard(
-                    icon: Icons.folder_zip_outlined,
-                    iconColor: AppTheme.syncPending,
-                    title: 'يدوي (JSON)',
-                    line1: 'ملفات من ولإلى المندوبين',
-                    infoText:
-                        'الملفات الواردة من المندوبين تحتاج مراجعتك واعتمادك قبل أن تُحتسب متزامنة نهائيًا.',
-                    onTap: _goLog,
-                    quickActions: [
-                      SyncQuickAction(
-                          icon: Icons.file_download_outlined,
-                          label: 'استيراد ملف مندوب',
-                          onPressed: _goImport),
-                      SyncQuickAction(
-                          icon: Icons.file_upload_outlined, label: 'إنشاء تحديث', onPressed: _goExport),
-                      SyncQuickAction(
-                          icon: Icons.history_outlined, label: 'سجل المزامنة', onPressed: _goLog),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: ListTile(
-                leading: _syncing
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.sync),
-                title: const Text('مزامنة بالنت'),
-                subtitle: const Text('سحب فوري لآخر البيانات من Firestore لهذا الجهاز'),
-                trailing: const Icon(Icons.chevron_left),
-                onTap: _syncing ? null : _syncNow,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.cloud_sync_outlined),
-                title: const Text('نشاط مباشر'),
-                subtitle: const Text('فواتير وسندات كل المندوبين لحظيًا من Firestore'),
-                trailing: const Icon(Icons.chevron_left),
-                onTap: _goLive,
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Divider(),
-            const SizedBox(height: 4),
+            const Text('مركز العمليات', style: TextStyle(fontSize: 17)),
+            Text('إدارة ومتابعة المزامنة',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500)),
+          ],
+        ),
+        actions: [
+          if (manager != null)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Text('الطريقة اليدوية (بدون إنترنت)',
-                  style: Theme.of(context).textTheme.labelMedium),
-            ),
-            const SizedBox(height: 8),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.file_download_outlined),
-                title: const Text('استيراد ملف مندوب'),
-                subtitle: const Text('معاينة الأرقام ثم اعتماد أو إلغاء'),
-                trailing: const Icon(Icons.chevron_left),
-                onTap: _goImport,
+              padding: const EdgeInsets.only(left: 12),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 15,
+                    backgroundColor: AppTheme.primary.withOpacity(0.12),
+                    child: Text(
+                      manager.displayName.isNotEmpty ? manager.displayName[0] : '؟',
+                      style: const TextStyle(
+                          color: AppTheme.primary, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.file_upload_outlined),
-                title: const Text('إنشاء تحديث'),
-                subtitle: const Text('تصدير المنتجات/الأسعار/العملاء لمندوب أو للجميع'),
-                trailing: const Icon(Icons.chevron_left),
-                onTap: _goExport,
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  SyncHeroCard(
+                    state: state,
+                    title: _busy
+                        ? 'جارِ التنفيذ...'
+                        : (_lastError != null ? 'حدثت مشكلة' : 'النظام يعمل بشكل طبيعي'),
+                    subtitle: _lastError != null
+                        ? _lastError!
+                        : 'جميع البيانات متزامنة وآمنة',
+                    ctaLabel: _lastError != null ? 'إعادة المحاولة' : 'مزامنة الآن',
+                    ctaKind: _lastError != null ? SyncHeroCta.danger : SyncHeroCta.solid,
+                    onCtaPressed: _busy
+                        ? null
+                        : (_lastError != null ? () => _run(_lastAction!) : _syncNow),
+                  ),
+                  const SizedBox(height: 18),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _StatCard(
+                          icon: Icons.error_outline,
+                          color: AppTheme.syncError,
+                          value: '$_errorsTotal',
+                          label: 'أخطاء',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _StatCard(
+                          icon: Icons.today_outlined,
+                          color: Theme.of(context).colorScheme.tertiary,
+                          value: '$_todayOpsCount',
+                          label: 'عمليات اليوم',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _StatCard(
+                          icon: Icons.inventory_2_outlined,
+                          color: AppTheme.syncPending,
+                          value: '$_pendingProductsCount',
+                          label: 'منتج يحتاج رفع',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _StatCard(
+                          icon: Icons.groups_outlined,
+                          color: AppTheme.syncSuccess,
+                          value: '$_activeRepsCount',
+                          label: 'مندوب نشط',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  if (attentionLines.isNotEmpty) ...[
+                    SyncAttentionBanner(
+                      title: 'يحتاج إلى انتباهك',
+                      lines: attentionLines,
+                      ctaLabel: 'عرض المندوبين',
+                      onCta: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ManagerUsersScreen()),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+
+                  SyncSectionHeader(
+                    title: 'حالة المندوبين',
+                    actionLabel: 'عرض الكل',
+                    onAction: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ManagerUsersScreen()),
+                    ),
+                  ),
+                  if (_sortedReps.isEmpty)
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: ListTile(
+                        leading: const Icon(Icons.person_add_alt_outlined),
+                        title: const Text('لا يوجد مندوبون بعد'),
+                        trailing: const Icon(Icons.chevron_left),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ManagerUsersScreen()),
+                        ),
+                      ),
+                    )
+                  else
+                    GridView.count(
+                      crossAxisCount: 2,
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      childAspectRatio: 2.6,
+                      children: [
+                        for (final rep in _sortedReps.take(4))
+                          _RepStatusCard(
+                            name: rep.displayName,
+                            repNumber: rep.repNumber,
+                            color: _repColor(rep),
+                            statusLabel: _repLabel(rep),
+                            caption: rep.lastSyncAt != null
+                                ? _relativeTime(rep.lastSyncAt!)
+                                : 'بلا نشاط',
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const ManagerUsersScreen()),
+                            ),
+                          ),
+                      ],
+                    ),
+                  const SizedBox(height: 20),
+
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: SyncChannelCard(
+                          icon: Icons.cloud_outlined,
+                          iconColor: AppTheme.syncSuccess,
+                          title: 'Firebase',
+                          line1: 'المزامنة السحابية',
+                          dotColor: AppTheme.syncSuccess,
+                          infoText:
+                              'بيانات كل المندوبين المرفوعة لفايربيس تصل تلقائيًا بالخلفية. اضغط "مزامنة الآن" لسحب آخر التحديثات فورًا.',
+                          quickActions: [
+                            SyncQuickAction(icon: Icons.sync, label: 'مزامنة الآن', onPressed: _syncNow),
+                            SyncQuickAction(
+                              icon: Icons.podcasts_outlined,
+                              label: 'نشاط مباشر',
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => const ManagerLiveActivityScreen()),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: SyncChannelCard(
+                          icon: Icons.folder_zip_outlined,
+                          iconColor: AppTheme.syncPending,
+                          title: 'يدوي (ملف)',
+                          line1: 'بلا إنترنت',
+                          infoText:
+                              'يستورد ملف بيانات وصلك من مندوب لمراجعته قبل الاعتماد، أو ينشئ ملف تحديث (منتجات/عملاء/إعدادات) لمشاركته مع مندوب أو كل المندوبين.',
+                          quickActions: [
+                            SyncQuickAction(
+                              icon: Icons.file_download_outlined,
+                              label: 'استيراد ملف مندوب',
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const ManagerImportScreen()),
+                              ),
+                            ),
+                            SyncQuickAction(
+                              icon: Icons.file_upload_outlined,
+                              label: 'إنشاء تحديث',
+                              onPressed: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (_) => const ManagerExportScreen()),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  const SyncSectionHeader(title: 'المزامنة اليدوية'),
+                  GridView.count(
+                    crossAxisCount: 2,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: 1.75,
+                    children: [
+                      _ManualSyncCard(
+                        icon: Icons.file_download_outlined,
+                        color: Theme.of(context).colorScheme.tertiary,
+                        title: 'استيراد ملف مندوب',
+                        subtitle: 'استلام بيانات من مندوب',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ManagerImportScreen()),
+                        ),
+                      ),
+                      _ManualSyncCard(
+                        icon: Icons.file_upload_outlined,
+                        color: AppTheme.syncSuccess,
+                        title: 'إنشاء تحديث',
+                        subtitle: 'إرسال تحديثات لمندوب',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ManagerExportScreen()),
+                        ),
+                      ),
+                      _ManualSyncCard(
+                        icon: Icons.history_outlined,
+                        color: Theme.of(context).colorScheme.secondary,
+                        title: 'سجل المزامنة',
+                        subtitle: 'كل عمليات الاستيراد',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ManagerSyncLogScreen()),
+                        ),
+                      ),
+                      _ManualSyncCard(
+                        icon: Icons.podcasts_outlined,
+                        color: AppTheme.primary,
+                        title: 'نشاط مباشر',
+                        subtitle: 'آخر حركة كل مندوب',
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ManagerLiveActivityScreen()),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  SyncSectionHeader(
+                    title: 'النسخ الاحتياطية',
+                    actionLabel: 'عرض الكل',
+                    onAction: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const BackupManagementScreen()),
+                    ),
+                  ),
+                  if (_backups.isEmpty)
+                    Card(
+                      margin: EdgeInsets.zero,
+                      child: ListTile(
+                        leading: const Icon(Icons.archive_outlined),
+                        title: const Text('لا توجد نسخة احتياطية بعد'),
+                        subtitle: const Text('يمكنك إنشاء أول نسخة من هذه الشاشة'),
+                        trailing: const Icon(Icons.chevron_left),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const BackupManagementScreen()),
+                        ),
+                      ),
+                    )
+                  else
+                    Column(
+                      children: [
+                        for (int i = 0; i < _backups.length && i < 2; i++) ...[
+                          if (i > 0) const SizedBox(height: 8),
+                          BackupPreviewCard(
+                            record: _backups[i],
+                            busy: _busy,
+                            onShare: () => _shareBackup(_backups[i]),
+                            onRestore: () => _restoreBackup(_backups[i]),
+                          ),
+                        ],
+                      ],
+                    ),
+                  const SizedBox(height: 20),
+
+                  SyncSectionHeader(
+                    title: 'آخر النشاط',
+                    actionLabel: 'عرض السجل الكامل',
+                    onAction: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ManagerSyncLogScreen()),
+                    ),
+                  ),
+                  ..._buildActivity(),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            Card(
-              child: ListTile(
-                leading: const Icon(Icons.history_outlined),
-                title: const Text('سجل المزامنة'),
-                subtitle: const Text('كل عمليات الاستيراد السابقة'),
-                trailing: const Icon(Icons.chevron_left),
-                onTap: _goLog,
-              ),
+    );
+  }
+
+  List<Widget> _buildActivity() {
+    final items = <_ActivityEntry>[];
+    for (final e in _importLog) {
+      items.add(_ActivityEntry(
+        time: e.importedAt,
+        icon: Icons.file_download_outlined,
+        iconColor: e.errorsCount > 0 ? AppTheme.syncError : AppTheme.syncSuccess,
+        title: 'استيراد من ${e.repDisplayName}',
+        subtitle: '${e.totalRecords} سجل${e.duplicatesCount > 0 ? ' - ${e.duplicatesCount} مكرر' : ''}',
+        badgeText: e.errorsCount > 0 ? '${e.errorsCount} خطأ' : 'ناجح',
+        badgeColor: e.errorsCount > 0 ? AppTheme.syncError : AppTheme.syncSuccess,
+      ));
+    }
+    for (final e in _exportLog) {
+      final count = e.productsCount + e.customersCount;
+      items.add(_ActivityEntry(
+        time: e.createdAt,
+        icon: Icons.file_upload_outlined,
+        iconColor: AppTheme.syncSuccess,
+        title: 'تحديث أُرسل ← ${e.targetLabel}',
+        subtitle: '$count سجل',
+        badgeText: 'مكتمل',
+        badgeColor: Theme.of(context).colorScheme.tertiary,
+      ));
+    }
+    items.sort((a, b) => b.time.compareTo(a.time));
+
+    if (items.isEmpty) {
+      return [
+        Card(
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('لا يوجد نشاط بعد', style: TextStyle(color: Colors.grey.shade600)),
+          ),
+        ),
+      ];
+    }
+
+    return [
+      Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          child: Column(
+            children: [
+              for (final e in items.take(6))
+                SyncActivityTile(
+                  time: _shortTime(e.time),
+                  icon: e.icon,
+                  iconColor: e.iconColor,
+                  title: e.title,
+                  subtitle: e.subtitle,
+                  badgeText: e.badgeText,
+                  badgeColor: e.badgeColor,
+                ),
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+}
+
+class _ActivityEntry {
+  final DateTime time;
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final String badgeText;
+  final Color badgeColor;
+  _ActivityEntry({
+    required this.time,
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.badgeText,
+    required this.badgeColor,
+  });
+}
+
+class _StatCard extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String value;
+  final String label;
+  const _StatCard(
+      {required this.icon, required this.color, required this.value, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 18),
+            const SizedBox(height: 6),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              style: TextStyle(fontSize: 9.5, color: Colors.grey.shade600),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RepStatusCard extends StatelessWidget {
+  final String name;
+  final String repNumber;
+  final Color color;
+  final String statusLabel;
+  final String caption;
+  final VoidCallback onTap;
+  const _RepStatusCard({
+    required this.name,
+    required this.repNumber,
+    required this.color,
+    required this.statusLabel,
+    required this.caption,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 16,
+                backgroundColor: color.withOpacity(0.12),
+                child: Text(
+                  name.isNotEmpty ? name[0] : '؟',
+                  style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    Text(
+                      repNumber.isNotEmpty ? 'مندوب $repNumber' : caption,
+                      style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                decoration:
+                    BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(99)),
+                child: Text(statusLabel,
+                    style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: color)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ManualSyncCard extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  const _ManualSyncCard({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration:
+                    BoxDecoration(shape: BoxShape.circle, color: color.withOpacity(0.12)),
+                child: Icon(icon, color: color, size: 17),
+              ),
+              const Spacer(),
+              Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+              const SizedBox(height: 2),
+              Text(subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 10.5, color: Colors.grey.shade600)),
+            ],
+          ),
         ),
       ),
     );
