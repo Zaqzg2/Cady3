@@ -13,6 +13,7 @@ import '../widgets/sync/sync_section_header.dart';
 import '../widgets/sync/sync_attention_banner.dart';
 import '../widgets/sync/sync_activity_tile.dart';
 import '../widgets/sync/backup_preview_card.dart';
+import '../widgets/sync/sync_status_panel.dart';
 import 'sync_outbox_inbox_screen.dart';
 import 'sync_pending_preview_screen.dart';
 import 'backup_management_screen.dart';
@@ -36,8 +37,6 @@ class _SyncScreenState extends State<SyncScreen> {
   List<BackupRecord> _backups = [];
   bool _loading = true;
   bool _busy = false;
-  String? _lastError;
-  Future<void> Function()? _lastAction;
 
   @override
   void initState() {
@@ -69,47 +68,55 @@ class _SyncScreenState extends State<SyncScreen> {
 
   int get _pendingCount => _pendingSummary?.total ?? 0;
 
-  Future<void> _run(Future<void> Function() action) async {
-    setState(() {
-      _busy = true;
-      _lastError = null;
-      _lastAction = action;
-    });
-    try {
-      await action();
-      if (!mounted) return;
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _lastError = e.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+  /// الأفعال الرئيسية الثلاثة تعرض لوحة حالة (bottom sheet) بدل الاكتفاء
+  /// بـ SnackBar — اللوحة نفسها مغلقة أثناء التنفيذ فتمنع تكرار الضغط،
+  /// فلا حاجة لعلم "busy" منفصل هنا كما كان سابقًا
+  Future<void> _syncFirebaseNow() async {
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'مزامنة Firebase',
+      runningLabel: 'جاري سحب آخر التحديثات',
+      action: () async {
+        final msg = await DbService.instance.pullFromFirestore(isManager: false);
+        if (mounted) await context.read<AppProvider>().refreshCustomersAndProducts();
+        return msg;
+      },
+    );
+    if (ok == true) await _refresh();
   }
 
-  Future<void> _syncFirebaseNow() => _run(() async {
-        final msg = await DbService.instance.pullFromFirestore(isManager: false);
-        if (!mounted) return;
-        await context.read<AppProvider>().refreshCustomersAndProducts();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-      });
+  Future<void> _export() async {
+    if (_pendingCount == 0) return;
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'إرسال البيانات للمدير',
+      runningLabel: 'جاري تجهيز الملف وفتح المشاركة',
+      action: () async {
+        final result = await context.read<AppProvider>().exportPendingData();
+        return 'تم تجهيز ${result.summary.total} عملية للإرسال';
+      },
+    );
+    if (ok == true) await _refresh();
+  }
 
-  Future<void> _export() => _run(() async {
-        await context.read<AppProvider>().exportPendingData();
-      });
-
-  Future<void> _importIncoming() => _run(() async {
-        final app = context.read<AppProvider>();
-        final content = await app.pickSyncAckFile();
-        if (content == null) return;
+  Future<void> _importIncoming() async {
+    final app = context.read<AppProvider>();
+    final content = await app.pickSyncAckFile();
+    if (content == null) return;
+    if (!mounted) return;
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'استيراد التحديثات',
+      runningLabel: 'جاري معالجة الملف',
+      action: () async {
         final result = await app.importIncomingSyncFile(content);
-        if (!mounted) return;
-        final msg = result.type == 'sync_ack'
+        return result.type == 'sync_ack'
             ? 'تم تأكيد مزامنة ${result.ackedCount} سجل'
             : 'تم استيراد ${result.productsUpdated} منتج و${result.customersUpdated} عميل';
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-      });
+      },
+    );
+    if (ok == true) await _refresh();
+  }
 
   Future<void> _editDeviceName() async {
     final app = context.read<AppProvider>();
@@ -147,7 +154,7 @@ class _SyncScreenState extends State<SyncScreen> {
   }
 
   Future<void> _restoreBackup(BackupRecord r) async {
-    final ok = await showDialog<bool>(
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('استعادة نسخة احتياطية'),
@@ -159,22 +166,19 @@ class _SyncScreenState extends State<SyncScreen> {
         ],
       ),
     );
-    if (ok != true) return;
-    setState(() => _busy = true);
-    try {
-      await BackupService.instance.restoreBackup(r);
-      if (!mounted) return;
-      await context.read<AppProvider>().refreshCustomersAndProducts();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('تمت الاستعادة بنجاح')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('تعذّرت الاستعادة: $e')));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    if (confirmed != true) return;
+    if (!mounted) return;
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'استعادة نسخة احتياطية',
+      runningLabel: 'جاري دمج البيانات',
+      action: () async {
+        await BackupService.instance.restoreBackup(r);
+        if (mounted) await context.read<AppProvider>().refreshCustomersAndProducts();
+        return 'تمت الاستعادة بنجاح';
+      },
+    );
+    if (ok == true) await _refresh();
   }
 
   String _relativeTime(DateTime d) {
@@ -204,11 +208,7 @@ class _SyncScreenState extends State<SyncScreen> {
     final app = context.watch<AppProvider>();
     final rep = app.currentUser;
 
-    final state = _busy
-        ? SyncPulseState.syncing
-        : (_lastError != null
-            ? SyncPulseState.failed
-            : (_pendingCount > 0 ? SyncPulseState.pending : SyncPulseState.synced));
+    final state = _pendingCount > 0 ? SyncPulseState.pending : SyncPulseState.synced;
 
     return Scaffold(
       appBar: AppBar(title: const Text('مركز المزامنة')),
@@ -221,28 +221,15 @@ class _SyncScreenState extends State<SyncScreen> {
                 children: [
                   SyncHeroCard(
                     state: state,
-                    title: _busy
-                        ? 'جارِ التنفيذ...'
-                        : (_lastError != null
-                            ? 'حدثت مشكلة'
-                            : (_pendingCount > 0
-                                ? 'لديك عمليات بانتظار الإرسال'
-                                : 'كل شيء متزامن')),
-                    subtitle: _lastError != null
-                        ? _lastError!
-                        : (_pendingCount > 0
-                            ? '$_pendingCount عملية لم تُرسَل بعد'
-                            : (rep?.lastSyncAt != null
-                                ? 'آخر مزامنة ${_relativeTime(rep!.lastSyncAt!)}'
-                                : 'لم تتم أي مزامنة بعد')),
+                    title: _pendingCount > 0 ? 'لديك عمليات بانتظار الإرسال' : 'كل شيء متزامن',
+                    subtitle: _pendingCount > 0
+                        ? '$_pendingCount عملية لم تُرسَل بعد'
+                        : (rep?.lastSyncAt != null
+                            ? 'آخر مزامنة ${_relativeTime(rep!.lastSyncAt!)}'
+                            : 'لم تتم أي مزامنة بعد'),
                     centerLabel: _pendingCount > 0 ? '$_pendingCount' : null,
-                    ctaLabel: _lastError != null
-                        ? 'إعادة المحاولة'
-                        : (_pendingCount > 0 ? 'إرسال الآن' : null),
-                    ctaKind: _lastError != null ? SyncHeroCta.danger : SyncHeroCta.solid,
-                    onCtaPressed: _busy
-                        ? null
-                        : (_lastError != null ? () => _run(_lastAction!) : _export),
+                    ctaLabel: _pendingCount > 0 ? 'إرسال الآن' : null,
+                    onCtaPressed: _pendingCount > 0 ? _export : null,
                     onTap: _pendingCount > 0
                         ? () => Navigator.push(
                               context,
@@ -261,7 +248,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           icon: Icons.sync,
                           color: AppTheme.syncSuccess,
                           label: 'مزامنة الآن',
-                          onTap: _busy ? null : _syncFirebaseNow,
+                          onTap: _syncFirebaseNow,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -270,7 +257,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           icon: Icons.file_download_outlined,
                           color: Theme.of(context).colorScheme.tertiary,
                           label: 'استيراد',
-                          onTap: _busy ? null : _importIncoming,
+                          onTap: _importIncoming,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -279,7 +266,7 @@ class _SyncScreenState extends State<SyncScreen> {
                           icon: Icons.file_upload_outlined,
                           color: Theme.of(context).colorScheme.secondary,
                           label: 'تصدير',
-                          onTap: (_busy || _pendingCount == 0) ? null : _export,
+                          onTap: _pendingCount == 0 ? null : _export,
                         ),
                       ),
                       const SizedBox(width: 10),

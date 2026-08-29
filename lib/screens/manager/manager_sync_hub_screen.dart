@@ -17,6 +17,7 @@ import '../../widgets/sync/sync_section_header.dart';
 import '../../widgets/sync/sync_attention_banner.dart';
 import '../../widgets/sync/sync_activity_tile.dart';
 import '../../widgets/sync/backup_preview_card.dart';
+import '../../widgets/sync/sync_status_panel.dart';
 import '../backup_management_screen.dart';
 import 'manager_import_screen.dart';
 import 'manager_export_screen.dart';
@@ -44,8 +45,6 @@ class _ManagerSyncHubScreenState extends State<ManagerSyncHubScreen> {
   PendingSummary? _pendingSummary;
   bool _loading = true;
   bool _busy = false;
-  String? _lastError;
-  Future<void> Function()? _lastAction;
 
   @override
   void initState() {
@@ -77,31 +76,21 @@ class _ManagerSyncHubScreenState extends State<ManagerSyncHubScreen> {
     }
   }
 
-  Future<void> _run(Future<void> Function() action) async {
-    setState(() {
-      _busy = true;
-      _lastError = null;
-      _lastAction = action;
-    });
-    try {
-      await action();
-      if (!mounted) return;
-      await _refresh();
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _lastError = e.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _syncNow() => _run(() async {
+  /// تعرض لوحة حالة (bottom sheet) بدل SnackBar وحدها؛ اللوحة مغلقة أثناء
+  /// التنفيذ فتمنع تكرار الضغط بلا حاجة لعلم "busy" منفصل هنا
+  Future<void> _syncNow() async {
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'مزامنة Firebase',
+      runningLabel: 'جاري سحب آخر التحديثات',
+      action: () async {
         final msg = await DbService.instance.pullFromFirestore(isManager: true);
-        if (!mounted) return;
-        await context.read<AppProvider>().refreshCustomersAndProducts();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-      });
+        if (mounted) await context.read<AppProvider>().refreshCustomersAndProducts();
+        return msg;
+      },
+    );
+    if (ok == true) await _refresh();
+  }
 
   Future<void> _shareBackup(BackupRecord r) async {
     setState(() => _busy = true);
@@ -113,7 +102,7 @@ class _ManagerSyncHubScreenState extends State<ManagerSyncHubScreen> {
   }
 
   Future<void> _restoreBackup(BackupRecord r) async {
-    final ok = await showDialog<bool>(
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('استعادة نسخة احتياطية'),
@@ -125,22 +114,19 @@ class _ManagerSyncHubScreenState extends State<ManagerSyncHubScreen> {
         ],
       ),
     );
-    if (ok != true) return;
-    setState(() => _busy = true);
-    try {
-      await BackupService.instance.restoreBackup(r);
-      if (!mounted) return;
-      await context.read<AppProvider>().refreshCustomersAndProducts();
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('تمت الاستعادة بنجاح')));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('تعذّرت الاستعادة: $e')));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    if (confirmed != true) return;
+    if (!mounted) return;
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'استعادة نسخة احتياطية',
+      runningLabel: 'جاري دمج البيانات',
+      action: () async {
+        await BackupService.instance.restoreBackup(r);
+        if (mounted) await context.read<AppProvider>().refreshCustomersAndProducts();
+        return 'تمت الاستعادة بنجاح';
+      },
+    );
+    if (ok == true) await _refresh();
   }
 
   String _relativeTime(DateTime d) {
@@ -200,9 +186,7 @@ class _ManagerSyncHubScreenState extends State<ManagerSyncHubScreen> {
     final app = context.watch<AppProvider>();
     final manager = app.currentUser;
 
-    final state = _busy
-        ? SyncPulseState.syncing
-        : (_lastError != null ? SyncPulseState.failed : SyncPulseState.synced);
+    const state = SyncPulseState.synced;
 
     final attentionLines = <String>[];
     if (_errorsTotal > 0) {
@@ -257,17 +241,10 @@ class _ManagerSyncHubScreenState extends State<ManagerSyncHubScreen> {
                 children: [
                   SyncHeroCard(
                     state: state,
-                    title: _busy
-                        ? 'جارِ التنفيذ...'
-                        : (_lastError != null ? 'حدثت مشكلة' : 'النظام يعمل بشكل طبيعي'),
-                    subtitle: _lastError != null
-                        ? _lastError!
-                        : 'جميع البيانات متزامنة وآمنة',
-                    ctaLabel: _lastError != null ? 'إعادة المحاولة' : 'مزامنة الآن',
-                    ctaKind: _lastError != null ? SyncHeroCta.danger : SyncHeroCta.solid,
-                    onCtaPressed: _busy
-                        ? null
-                        : (_lastError != null ? () => _run(_lastAction!) : _syncNow),
+                    title: 'النظام يعمل بشكل طبيعي',
+                    subtitle: 'جميع البيانات متزامنة وآمنة',
+                    ctaLabel: 'مزامنة الآن',
+                    onCtaPressed: _syncNow,
                   ),
                   const SizedBox(height: 18),
 
