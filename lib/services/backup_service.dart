@@ -14,15 +14,22 @@ import 'settings_service.dart';
 import 'numbering_service.dart';
 import 'share_util.dart';
 
+/// مصدر إنشاء النسخة: يدوي (زر "نسخ احتياطي فوري") أو تلقائي (فحص عند
+/// فتح التطبيق حسب الجدولة). يُستخدم فقط لعرض تصنيف صحيح بقائمة النسخ —
+/// لا يُغيّر آلية الاستعادة أو المشاركة، فكلاهما JSON بنفس البنية تمامًا
+enum BackupSource { manual, auto }
+
 /// سجل نسخة احتياطية واحدة — يُخزَّن محتواه كاملًا محليًا (Hive) حتى تصير
-/// النسخ الاحتياطية قائمة تقدر تستعرضها وتستعيد أو تشارك أي وحدة منها
-/// بضغطة، بدل عملية "أنشئ وشارك فورًا" لمرة وحدة بلا أي أثر بعدها.
+/// النسخ الاحتياطية قائمة واحدة موحّدة (يدوية وتلقائية معًا) تقدر تستعرضها
+/// وتستعيد أو تشارك أي وحدة منها بضغطة، بدل عملية "أنشئ وشارك فورًا" لمرة
+/// وحدة بلا أي أثر بعدها.
 class BackupRecord {
   final String id;
   final String fileName;
   final DateTime createdAt;
   final int sizeBytes;
   final String jsonContent;
+  final BackupSource source;
 
   BackupRecord({
     required this.id,
@@ -30,6 +37,7 @@ class BackupRecord {
     required this.createdAt,
     required this.sizeBytes,
     required this.jsonContent,
+    this.source = BackupSource.manual,
   });
 
   Map<String, dynamic> toMap() => {
@@ -38,6 +46,7 @@ class BackupRecord {
         'createdAt': createdAt.toIso8601String(),
         'sizeBytes': sizeBytes,
         'jsonContent': jsonContent,
+        'source': source.name,
       };
 
   factory BackupRecord.fromMap(Map<String, dynamic> m) => BackupRecord(
@@ -46,6 +55,12 @@ class BackupRecord {
         createdAt: DateTime.parse(m['createdAt'] as String),
         sizeBytes: m['sizeBytes'] as int,
         jsonContent: m['jsonContent'] as String,
+        // النسخ المحفوظة قبل إضافة هذا الحقل ليس لها 'source' بالخريطة —
+        // نفترضها يدوية افتراضيًا بدل رمي استثناء عليها
+        source: BackupSource.values.firstWhere(
+          (s) => s.name == m['source'],
+          orElse: () => BackupSource.manual,
+        ),
       );
 
   String get formattedSize {
@@ -115,9 +130,10 @@ class BackupService {
   }
 
   /// يبني نسخة احتياطية ويحفظها بالسجل المحلي بدون فتح أي واجهة مشاركة —
-  /// تُستخدم من شاشة "إدارة النسخ الاحتياطية" (زر إنشاء) وأيضًا من النسخ
-  /// التلقائي الدوري
-  Future<BackupRecord> _createBackupRecord() async {
+  /// تُستخدم من شاشة "إدارة النسخ الاحتياطية" (زر إنشاء، source: manual)
+  /// وأيضًا من النسخ التلقائي الدوري (source: auto) — كلاهما بنفس السجل
+  /// الموحّد الآن حتى تظهر النسخ التلقائية بنفس القائمة القابلة للاستعراض
+  Future<BackupRecord> _createBackupRecord({BackupSource source = BackupSource.manual}) async {
     final json = await exportToJsonString();
     final record = BackupRecord(
       id: _uuid.v4(),
@@ -125,6 +141,7 @@ class BackupService {
       createdAt: DateTime.now(),
       sizeBytes: utf8.encode(json).length,
       jsonContent: json,
+      source: source,
     );
     final box = await _log;
     await box.put(record.id, record.toMap());
@@ -132,8 +149,9 @@ class BackupService {
     return record;
   }
 
-  /// نسخة عامة من _createBackupRecord لاستخدام شاشة الإدارة مباشرة
-  Future<BackupRecord> createBackupRecord() => _createBackupRecord();
+  /// نسخة عامة من _createBackupRecord لاستخدام شاشة الإدارة والنسخ التلقائي
+  Future<BackupRecord> createBackupRecord({BackupSource source = BackupSource.manual}) =>
+      _createBackupRecord(source: source);
 
   Future<void> _pruneOldBackups(Box box) async {
     if (box.length <= _maxKeptBackups) return;

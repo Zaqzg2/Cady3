@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/invoice.dart';
 import 'db_service.dart';
@@ -8,9 +9,12 @@ import 'share_util.dart';
 
 /// تصدير بيانات التطبيق كملفات CSV (تُفتح مباشرة في Excel/Sheets) لغرض
 /// المراجعة اليدوية — بخلاف النسخة الاحتياطية JSON المخصّصة للاستيراد
-/// الآلي فقط
+/// الآلي فقط. الملفات تُبنى وتُشارك فورًا دون حفظها محليًا (بخلاف النسخ
+/// الاحتياطية)، لذا لا "استعادة" ولا قائمة تاريخ كاملة لها — فقط طابع
+/// وقت آخر عملية تصدير، لعرضه كسطر معلومة بسيط لا أكثر
 class CsvExportService {
   static final _df = DateFormat('yyyy-MM-dd');
+  static const _lastExportKey = 'csv_last_export_at';
 
   static String _esc(Object? v) {
     final s = (v ?? '').toString();
@@ -103,5 +107,13 @@ class CsvExportService {
   static Future<void> exportAndShare() async {
     final files = await exportAll();
     await ShareUtil.shareMultiple(files, text: 'تصدير بيانات كادي للمنظفات (CSV)');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastExportKey, DateTime.now().toIso8601String());
+  }
+
+  static Future<DateTime?> lastExportAt() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_lastExportKey);
+    return raw != null ? DateTime.tryParse(raw) : null;
   }
 }

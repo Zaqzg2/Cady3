@@ -8,15 +8,13 @@ import '../services/csv_export_service.dart';
 import '../models/company_settings.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
-import '../widgets/sync/sync_channel_card.dart';
-import '../widgets/sync/sync_hero_card.dart';
-import '../widgets/sync/sync_pulse.dart';
+import '../widgets/sync/sync_section_header.dart';
+import '../widgets/sync/sync_status_panel.dart';
 import 'settings_data_screen.dart';
 
-/// إدارة النسخ الاحتياطية: بطاقة حالة رئيسية تجيب بلمحة "هل بياناتي
-/// محفوظة؟"، ثم بطاقتا القناتين (تلقائي دوري، ويدوي فوري)، فقائمة كل
-/// نسخة محفوظة محليًا بمحتواها الكامل — كل وحدة تُستعاد أو تُشارك أو
-/// تُحذف مباشرة من نفس الشاشة، تمامًا كما كانت
+/// إدارة النسخ الاحتياطية: ثلاث بطاقات فعل (CSV، تلقائي، يدوي)، ثم قائمة
+/// موحّدة لكل نسخة محفوظة (يدوية وتلقائية معًا، موسومة بمصدرها) — كل نسخة
+/// تُستعاد أو تُشارك أو تُحذف مباشرة من نفس الشاشة
 class BackupManagementScreen extends StatefulWidget {
   const BackupManagementScreen({super.key});
 
@@ -25,104 +23,98 @@ class BackupManagementScreen extends StatefulWidget {
 }
 
 class _BackupManagementScreenState extends State<BackupManagementScreen> {
-  bool _busy = false;
-  String? _lastError;
-  Future<void> Function()? _lastAction;
   late Future<List<BackupRecord>> _future;
   DateTime? _autoLastRun;
-  bool _loadingAuto = true;
-  bool _csvBusy = false;
+  DateTime? _csvLastExport;
+  bool _loadingExtras = true;
+  // فقط لعمليتَي المشاركة والحذف السريعتين بالقائمة؛ الإنشاء والاستعادة
+  // وتصدير CSV تمرّ كلّها عبر لوحة الحالة التي تمنع تكرار الضغط بنفسها
+  bool _busy = false;
 
   @override
   void initState() {
     super.initState();
     _future = BackupService.instance.listBackups();
-    _loadAutoInfo();
+    _loadExtras();
   }
 
-  Future<void> _loadAutoInfo() async {
-    final t = await AutoBackupService.lastRunAt();
+  Future<void> _loadExtras() async {
+    final auto = await AutoBackupService.lastRunAt();
+    final csv = await CsvExportService.lastExportAt();
     if (!mounted) return;
     setState(() {
-      _autoLastRun = t;
-      _loadingAuto = false;
+      _autoLastRun = auto;
+      _csvLastExport = csv;
+      _loadingExtras = false;
     });
   }
 
   void _refresh() {
     setState(() => _future = BackupService.instance.listBackups());
-    _loadAutoInfo();
+    _loadExtras();
   }
 
-  void _snack(String msg) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
-  Future<void> _create() async {
-    _lastAction = _create;
-    setState(() {
-      _busy = true;
-      _lastError = null;
-    });
-    try {
-      await BackupService.instance.createBackupRecord();
-      _snack('تم إنشاء نسخة احتياطية جديدة');
-      _refresh();
-    } catch (e) {
-      setState(() => _lastError = 'تعذّر إنشاء النسخة: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+  Future<void> _createManual() async {
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'نسخ احتياطي يدوي',
+      runningLabel: 'جاري تجهيز النسخة',
+      action: () async {
+        await BackupService.instance.createBackupRecord(source: BackupSource.manual);
+        return 'تم إنشاء نسخة احتياطية جديدة';
+      },
+    );
+    if (ok == true) _refresh();
   }
 
-  /// منفصل تمامًا عن _busy/_lastError الخاصّين بالنسخ الاحتياطي أعلاه —
-  /// فشل تصدير CSV لا يعني وجود مشكلة بالنسخ الاحتياطية نفسها
   Future<void> _exportCsv() async {
-    if (_csvBusy) return;
-    setState(() => _csvBusy = true);
-    try {
-      await CsvExportService.exportAndShare();
-    } catch (e) {
-      _snack('تعذّر تصدير CSV: $e');
-    } finally {
-      if (mounted) setState(() => _csvBusy = false);
-    }
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'تصدير CSV',
+      runningLabel: 'جاري تجهيز الملفات وفتح المشاركة',
+      action: () async {
+        await CsvExportService.exportAndShare();
+        return 'تم تجهيز ملفات CSV للمشاركة';
+      },
+    );
+    if (ok == true) _refresh();
   }
 
   Future<void> _restoreFromFile() async {
-    _lastAction = _restoreFromFile;
     final content = await BackupService.instance.pickBackupContent();
     if (content == null) return;
-    final ok = await _confirmRestore(fromExternalFile: true);
-    if (ok != true) return;
-    setState(() {
-      _busy = true;
-      _lastError = null;
-    });
-    try {
-      await BackupService.instance.importFromJson(content);
-      await _afterRestore();
-    } catch (e) {
-      setState(() => _lastError = 'تعذّر استيراد الملف: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    if (!mounted) return;
+    final confirmed = await _confirmRestore(fromExternalFile: true);
+    if (confirmed != true) return;
+    if (!mounted) return;
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'استعادة من ملف',
+      runningLabel: 'جاري دمج البيانات',
+      action: () async {
+        await BackupService.instance.importFromJson(content);
+        if (mounted) await context.read<AppProvider>().init();
+        return 'تمت الاستعادة بنجاح';
+      },
+    );
+    if (ok == true) _refresh();
   }
 
   Future<void> _restoreFromRecord(BackupRecord r) async {
-    final ok = await _confirmRestore(fromExternalFile: false, fileName: r.fileName);
-    if (ok != true) return;
-    setState(() {
-      _busy = true;
-      _lastError = null;
-    });
-    try {
-      await BackupService.instance.restoreBackup(r);
-      await _afterRestore();
-    } catch (e) {
-      setState(() => _lastError = 'تعذّرت الاستعادة: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    final confirmed = await _confirmRestore(fromExternalFile: false, fileName: r.fileName);
+    if (confirmed != true) return;
+    if (!mounted) return;
+    final ok = await showSyncStatusPanel(
+      context,
+      title: 'استعادة نسخة احتياطية',
+      runningLabel: 'جاري دمج البيانات',
+      action: () async {
+        await BackupService.instance.restoreBackup(r);
+        if (mounted) await context.read<AppProvider>().init();
+        return 'تمت الاستعادة بنجاح';
+      },
+    );
+    if (ok == true) _refresh();
   }
 
   Future<bool?> _confirmRestore({required bool fromExternalFile, String? fileName}) {
@@ -139,13 +131,6 @@ class _BackupManagementScreenState extends State<BackupManagementScreen> {
         ],
       ),
     );
-  }
-
-  Future<void> _afterRestore() async {
-    if (!mounted) return;
-    await context.read<AppProvider>().init();
-    _snack('تمت الاستعادة بنجاح');
-    _refresh();
   }
 
   Future<void> _delete(BackupRecord r) async {
@@ -166,11 +151,24 @@ class _BackupManagementScreenState extends State<BackupManagementScreen> {
       ),
     );
     if (ok != true) return;
-    await BackupService.instance.deleteBackup(r.id);
-    _refresh();
+    setState(() => _busy = true);
+    try {
+      await BackupService.instance.deleteBackup(r.id);
+      _refresh();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
-  String _formatDate(DateTime? d) {
+  Future<void> _toggleAuto(bool enabled) async {
+    final app = context.read<AppProvider>();
+    final settings = app.settings;
+    settings.autoBackupFrequency = enabled ? AutoBackupFrequency.daily : AutoBackupFrequency.off;
+    await app.saveSettings(settings);
+    if (mounted) setState(() {});
+  }
+
+  String _formatDateTime(DateTime? d) {
     if (d == null) return 'لم يحدث بعد';
     final now = DateTime.now();
     final sameDay = d.year == now.year && d.month == now.month && d.day == now.day;
@@ -183,182 +181,123 @@ class _BackupManagementScreenState extends State<BackupManagementScreen> {
     return '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
   }
 
-  String _frequencyLabel(AutoBackupFrequency f) {
-    switch (f) {
-      case AutoBackupFrequency.off:
-        return 'معطّل';
-      case AutoBackupFrequency.daily:
-        return 'يومي';
-      case AutoBackupFrequency.weekly:
-        return 'أسبوعي';
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppProvider>().settings;
+    final autoEnabled = settings.autoBackupFrequency != AutoBackupFrequency.off;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('النسخ الاحتياطية')),
+      appBar: AppBar(
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('النسخ الاحتياطي', style: TextStyle(fontSize: 17)),
+            Text('احفظ بياناتك بأمان.. في أي وقت',
+                style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500)),
+          ],
+        ),
+      ),
       body: RefreshIndicator(
-        onRefresh: () async {
-          _refresh();
-        },
+        onRefresh: () async => _refresh(),
         child: FutureBuilder<List<BackupRecord>>(
           future: _future,
           builder: (context, snap) {
             final loadingList = !snap.hasData;
             final records = snap.data ?? const <BackupRecord>[];
-            final hasBackups = records.isNotEmpty;
-
-            SyncPulseState state;
-            if (_busy) {
-              state = SyncPulseState.syncing;
-            } else if (_lastError != null) {
-              state = SyncPulseState.failed;
-            } else if (!loadingList && !hasBackups) {
-              state = SyncPulseState.pending;
-            } else {
-              state = SyncPulseState.synced;
-            }
-
-            String title = '';
-            String subtitle = '';
-            String? ctaLabel;
-            SyncHeroCta ctaKind = SyncHeroCta.solid;
-            VoidCallback? onCta;
-
-            switch (state) {
-              case SyncPulseState.syncing:
-                title = 'جارٍ التنفيذ';
-                subtitle = 'برجاء الانتظار حتى تكتمل العملية';
-                break;
-              case SyncPulseState.failed:
-                title = 'حدثت مشكلة';
-                subtitle = _lastError ?? 'تعذّرت آخر عملية';
-                ctaLabel = 'إعادة المحاولة';
-                ctaKind = SyncHeroCta.danger;
-                onCta = () => _lastAction?.call();
-                break;
-              case SyncPulseState.pending:
-                title = 'لا توجد نسخة احتياطية بعد';
-                subtitle = 'يُنصح بإنشاء نسخة الآن لحماية بياناتك';
-                ctaLabel = 'إنشاء نسخة الآن';
-                ctaKind = SyncHeroCta.solid;
-                onCta = _create;
-                break;
-              case SyncPulseState.synced:
-                title = 'بياناتك محفوظة';
-                subtitle = loadingList
-                    ? 'جارٍ التحقّق...'
-                    : '${records.length} نسخة محفوظة · آخر نسخة ${_formatDate(records.first.createdAt)}';
-                ctaLabel = 'إنشاء نسخة جديدة';
-                ctaKind = SyncHeroCta.ghost;
-                onCta = _create;
-                break;
-            }
-            if (_busy) onCta = null;
 
             return ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                SyncHeroCard(
-                  state: state,
-                  progress: null,
-                  centerLabel: '!',
-                  pendingCaption: 'بلا نسخة',
-                  title: title,
-                  subtitle: subtitle,
-                  ctaLabel: ctaLabel,
-                  ctaKind: ctaKind,
-                  onCtaPressed: onCta,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: SyncChannelCard(
-                        icon: Icons.event_repeat_outlined,
-                        iconColor: AppTheme.syncSuccess,
-                        title: 'تلقائي',
-                        line1: _frequencyLabel(settings.autoBackupFrequency),
-                        line2: _loadingAuto
-                            ? null
-                            : 'آخر تنفيذ ${_formatDate(_autoLastRun)}',
-                        infoText: settings.autoBackupFrequency == AutoBackupFrequency.off
-                            ? 'النسخ التلقائي معطّل حاليًا. عند تفعيله، يُنشئ التطبيق نسخة بصمت كل فترة عند فتحه، دون مقاطعتك بشاشة مشاركة.'
-                            : 'يفحص التطبيق عند كل فتح إن حان وقت نسخة جديدة (${_frequencyLabel(settings.autoBackupFrequency)}) وينشئها بصمت دون مقاطعتك.',
-                        quickActions: [
-                          SyncQuickAction(
-                            icon: Icons.tune,
-                            label: 'تغيير الجدولة',
-                            onPressed: () => Navigator.push(context,
-                                MaterialPageRoute(builder: (_) => const SettingsDataScreen())),
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: _ActionCard(
+                          icon: Icons.grid_on_outlined,
+                          color: AppTheme.syncSuccess,
+                          softColor: AppTheme.syncSuccessSoft,
+                          title: 'نسخ CSV',
+                          description: 'حفظ البيانات بصيغة CSV للاستخدام في Excel وغيره',
+                          buttonLabel: 'إنشاء نسخة',
+                          buttonIcon: Icons.file_download_outlined,
+                          onPressed: _exportCsv,
+                          footer: _loadingExtras
+                              ? null
+                              : 'آخر تصدير: ${_formatDateTime(_csvLastExport)}',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _ActionCard(
+                          icon: Icons.sync,
+                          color: Theme.of(context).colorScheme.tertiary,
+                          softColor: Theme.of(context).colorScheme.tertiary.withOpacity(0.12),
+                          title: 'نسخ تلقائي',
+                          description: 'نسخة احتياطية تلقائية عند فتح التطبيق حسب الجدول',
+                          toggleValue: autoEnabled,
+                          onToggle: _toggleAuto,
+                          buttonLabel: 'إعداد الجدول',
+                          buttonIcon: Icons.tune,
+                          onPressed: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SettingsDataScreen()),
                           ),
-                        ],
+                          footer: _loadingExtras
+                              ? null
+                              : (autoEnabled
+                                  ? 'آخر تنفيذ: ${_formatDateTime(_autoLastRun)}'
+                                  : 'معطّل حاليًا'),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: SyncChannelCard(
-                        icon: Icons.archive_outlined,
-                        iconColor: AppTheme.syncPending,
-                        title: 'يدوي',
-                        line1: loadingList
-                            ? 'جارٍ التحقّق...'
-                            : hasBackups
-                                ? '${records.length} نسخة محفوظة'
-                                : 'لا توجد نسخة بعد',
-                        infoText:
-                            'نسخة فورية بضغطة، تُحفظ محليًا بقائمة تقدر تستعرضها وتستعيد أو تشارك أي وحدة منها لاحقًا.',
-                        quickActions: [
-                          SyncQuickAction(
-                              icon: Icons.add_circle_outline,
-                              label: 'إنشاء نسخة الآن',
-                              onPressed: _busy ? () {} : _create),
-                          SyncQuickAction(
-                              icon: Icons.restore,
-                              label: 'استعادة من ملف',
-                              onPressed: _busy ? () {} : _restoreFromFile),
-                        ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _ActionCard(
+                          icon: Icons.archive_outlined,
+                          color: AppTheme.primary,
+                          softColor: AppTheme.primary.withOpacity(0.08),
+                          title: 'نسخ يدوي',
+                          description: 'نسخة احتياطية فورية من جميع بياناتك الآن',
+                          buttonLabel: 'ابدأ الآن',
+                          buttonIcon: Icons.upload_outlined,
+                          onPressed: _createManual,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 10),
-                SyncChannelCard(
-                  icon: Icons.table_chart_outlined,
-                  iconColor: Theme.of(context).colorScheme.tertiary,
-                  title: 'CSV',
-                  line1: 'للمراجعة في Excel/Sheets',
-                  line2: 'عملاء، فواتير، وسندات',
-                  infoText:
-                      'يُصدّر ملفات CSV منفصلة للعملاء والفواتير والسندات لفتحها في '
-                      'Excel أو Sheets ومراجعتها يدويًا. منفصل تمامًا عن النسخة '
-                      'الاحتياطية JSON أعلاه، ولا يُستخدم للاستعادة.',
-                  quickActions: [
-                    SyncQuickAction(
-                        icon: Icons.file_download_outlined,
-                        label: 'تصدير الآن',
-                        onPressed: _csvBusy ? () {} : _exportCsv),
-                  ],
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _restoreFromFile,
+                    icon: const Icon(Icons.restore, size: 17),
+                    label: const Text('استعادة من ملف خارجي'),
+                  ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 6),
+                SyncSectionHeader(
+                  title: 'النسخ الاحتياطية المحفوظة',
+                  actionLabel: 'تحديث',
+                  onAction: _refresh,
+                ),
                 if (loadingList)
                   const Padding(
-                    padding: EdgeInsets.only(top: 40),
+                    padding: EdgeInsets.only(top: 30),
                     child: Center(child: CircularProgressIndicator()),
                   )
-                else if (!hasBackups)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 24),
-                    child: Center(child: Text('لا توجد نسخ احتياطية محفوظة بعد')),
+                else if (records.isEmpty)
+                  Card(
+                    margin: EdgeInsets.zero,
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Center(
+                        child: Text('لا توجد نسخ احتياطية محفوظة بعد',
+                            style: TextStyle(color: Colors.grey.shade600)),
+                      ),
+                    ),
                   )
-                else ...[
-                  Text('كل النسخ (${records.length})',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  const SizedBox(height: 10),
+                else
                   for (final r in records) ...[
                     _BackupRecordCard(
                       record: r,
@@ -369,11 +308,138 @@ class _BackupManagementScreenState extends State<BackupManagementScreen> {
                     ),
                     const SizedBox(height: 10),
                   ],
-                ],
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.syncSuccessSoft,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.shield_outlined, color: AppTheme.syncSuccess, size: 22),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('حماية بياناتك أولويتنا',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+                            const SizedBox(height: 2),
+                            Text('يمكنك استعادة بياناتك في أي وقت من نسخة محفوظة',
+                                style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+                          ],
+                        ),
+                      ),
+                      if (records.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            const Icon(Icons.check_circle, color: AppTheme.syncSuccess, size: 16),
+                            const SizedBox(height: 2),
+                            Text(_formatDateTime(records.first.createdAt),
+                                style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ],
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+class _ActionCard extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final Color softColor;
+  final String title;
+  final String description;
+  final String buttonLabel;
+  final IconData buttonIcon;
+  final VoidCallback onPressed;
+  final bool? toggleValue;
+  final ValueChanged<bool>? onToggle;
+  final String? footer;
+
+  const _ActionCard({
+    required this.icon,
+    required this.color,
+    required this.softColor,
+    required this.title,
+    required this.description,
+    required this.buttonLabel,
+    required this.buttonIcon,
+    required this.onPressed,
+    this.toggleValue,
+    this.onToggle,
+    this.footer,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: softColor,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 22),
+              if (toggleValue != null) ...[
+                const Spacer(),
+                Transform.scale(
+                  scale: 0.7,
+                  child: Switch(value: toggleValue!, activeColor: color, onChanged: onToggle),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5)),
+          const SizedBox(height: 4),
+          Text(
+            description,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 10, color: Colors.grey.shade700, height: 1.3),
+          ),
+          if (footer != null) ...[
+            const SizedBox(height: 4),
+            Text(footer!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 9, color: Colors.grey.shade500)),
+          ],
+          const Spacer(),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: onPressed,
+              icon: Icon(buttonIcon, size: 14),
+              label: Text(buttonLabel, style: const TextStyle(fontSize: 10.5)),
+              style: FilledButton.styleFrom(
+                backgroundColor: color,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -396,6 +462,8 @@ class _BackupRecordCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isAuto = record.source == BackupSource.auto;
+    final tagColor = isAuto ? Theme.of(context).colorScheme.tertiary : AppTheme.primary;
     final time =
         '${record.createdAt.hour.toString().padLeft(2, '0')}:${record.createdAt.minute.toString().padLeft(2, '0')}';
     return Card(
@@ -404,26 +472,41 @@ class _BackupRecordCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
         onTap: busy ? null : onTap,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+          padding: const EdgeInsets.fromLTRB(14, 10, 4, 10),
           child: Row(
             children: [
               CircleAvatar(
                 radius: 18,
-                backgroundColor: AppTheme.syncPendingSoft,
-                child: Icon(Icons.archive_outlined, color: AppTheme.syncPending, size: 18),
+                backgroundColor: tagColor.withOpacity(0.12),
+                child: Icon(Icons.archive_outlined, color: tagColor, size: 18),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('${Formatters.d(record.createdAt)}  $time',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5)),
-                    const SizedBox(height: 2),
-                    Text('${record.formattedSize} • ${record.fileName}',
+                    Row(
+                      children: [
+                        Text(isAuto ? 'نسخة تلقائية' : 'نسخة يدوية',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: tagColor.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                          child: Text(isAuto ? 'تلقائي' : 'يدوي',
+                              style: TextStyle(
+                                  fontSize: 9.5, fontWeight: FontWeight.bold, color: tagColor)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text('${Formatters.d(record.createdAt)}  $time • ${record.formattedSize}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: Colors.grey.shade600, fontSize: 11.5)),
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 11)),
                   ],
                 ),
               ),
@@ -432,10 +515,24 @@ class _BackupRecordCard extends StatelessWidget {
                 tooltip: 'مشاركة',
                 onPressed: busy ? null : onShare,
               ),
-              IconButton(
-                icon: Icon(Icons.delete_outline, size: 20, color: AppTheme.syncError),
-                tooltip: 'حذف',
-                onPressed: busy ? null : onDelete,
+              PopupMenuButton<String>(
+                enabled: !busy,
+                icon: const Icon(Icons.more_vert, size: 20),
+                onSelected: (v) {
+                  if (v == 'delete') onDelete();
+                },
+                itemBuilder: (ctx) => [
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.delete_outline, size: 18, color: AppTheme.syncError),
+                        const SizedBox(width: 8),
+                        const Text('حذف'),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
