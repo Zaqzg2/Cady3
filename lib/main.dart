@@ -13,7 +13,6 @@ import 'screens/home_screen.dart';
 import 'screens/customers_screen.dart';
 import 'screens/products_screen.dart';
 import 'screens/reports_screen.dart';
-import 'screens/settings_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/manager/manager_root_nav.dart';
@@ -116,7 +115,7 @@ class CadySalesApp extends StatelessWidget {
       child: Consumer<AppProvider>(
         builder: (context, app, _) {
           return MaterialApp(
-            title: 'كادي',
+            title: 'كادي للمنظفات',
             debugShowCheckedModeBanner: false,
             locale: const Locale('ar'),
             supportedLocales: const [Locale('ar')],
@@ -328,11 +327,7 @@ class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
   }
 }
 
-/// شريط تنقّل سفلي + سحب أفقي على نفس الصفحات: من الرئيسية، السحب
-/// لليمين ينقل للعملاء ثم المنتجات (وصولًا للتقارير)، والسحب لليسار
-/// يفتح الإعدادات كصفحة جانبية لا تظهر بشريط التنقل نفسه. كل ذلك عبر
-/// PageController واحد متزامن مع NavigationBar، فلمس أي وسيلة يحرّك
-/// الأخرى تلقائيًا
+/// شريط التنقل السفلي: الرئيسية / العملاء / المنتجات / التقارير
 class RootNav extends StatefulWidget {
   const RootNav({super.key});
 
@@ -341,15 +336,9 @@ class RootNav extends StatefulWidget {
 }
 
 class _RootNavState extends State<RootNav> {
-  // ترتيب الصفحات بالفهرس: 0=الإعدادات (سحب يسارًا فقط، بلا زر بالشريط)
-  // 1=الرئيسية (البداية) 2=العملاء 3=المنتجات 4=التقارير
-  static const int _homeIndex = 1;
-
-  final PageController _controller = PageController(initialPage: _homeIndex);
-  int _pageIndex = _homeIndex;
+  int _index = 0;
 
   final _pages = const [
-    SettingsScreen(),
     HomeScreen(),
     CustomersScreen(),
     ProductsScreen(),
@@ -357,33 +346,12 @@ class _RootNavState extends State<RootNav> {
   ];
 
   @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _goToNavIndex(int navIndex) {
-    _controller.animateToPage(
-      navIndex + 1,
-      duration: const Duration(milliseconds: 280),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
-  @override
   Widget build(BuildContext context) {
-    // شريط التنقل السفلي يعرض نفس الوجهات الأربع القديمة فقط؛ الإعدادات
-    // مقصودة أن تبقى مخصّصة للسحب حتى لا يتكرر الوصول لها بطريقتين
-    final navIndex = (_pageIndex - 1).clamp(0, 3);
     return Scaffold(
-      body: PageView(
-        controller: _controller,
-        onPageChanged: (i) => setState(() => _pageIndex = i),
-        children: _pages,
-      ),
+      body: IndexedStack(index: _index, children: _pages),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: navIndex,
-        onDestinationSelected: _goToNavIndex,
+        selectedIndex: _index,
+        onDestinationSelected: (i) => setState(() => _index = i),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home), label: 'الرئيسية'),
           NavigationDestination(icon: Icon(Icons.people), label: 'العملاء'),

@@ -7,7 +7,6 @@ import '../models/customer.dart';
 import '../models/customer_stats.dart';
 import '../providers/app_provider.dart';
 import '../utils/formatters.dart';
-import '../theme/app_theme.dart';
 
 /// عدد الأيام التي بعدها يُعتبر العميل "متأخر السداد" إن كان عليه رصيد مدين
 const int kOverdueAfterDays = 30;
@@ -163,7 +162,7 @@ class CustomerCard extends StatelessWidget {
               children: [
                 SlidableAction(
                   onPressed: (_) => onNewInvoice(),
-                  backgroundColor: AppTheme.syncSuccess,
+                  backgroundColor: Colors.teal,
                   foregroundColor: Colors.white,
                   icon: Icons.shopping_cart_outlined,
                   label: 'فاتورة',
@@ -283,7 +282,7 @@ class CustomerCard extends StatelessWidget {
                             backgroundColor: Colors.grey.shade300,
                             color: creditRatio >= 1
                                 ? Colors.red
-                                : (creditRatio >= 0.8 ? Colors.orange : AppTheme.syncSuccess),
+                                : (creditRatio >= 0.8 ? Colors.orange : Colors.teal),
                           ),
                         ),
                       ],

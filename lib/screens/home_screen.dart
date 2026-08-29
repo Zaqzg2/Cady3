@@ -40,7 +40,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('كادي'),
+        title: const Text('كادي للمنظفات'),
         leading: IconButton(
           icon: const Icon(Icons.settings),
           tooltip: 'الإعدادات',

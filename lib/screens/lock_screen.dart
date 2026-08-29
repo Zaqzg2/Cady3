@@ -54,7 +54,7 @@ class _LockScreenState extends State<LockScreen> {
               const SizedBox(height: 40),
               const Icon(Icons.lock, size: 56),
               const SizedBox(height: 12),
-              const Text('كادي',
+              const Text('كادي للمنظفات',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
               const SizedBox(height: 6),
               const Text('أدخل كلمة المرور لفتح التطبيق'),
