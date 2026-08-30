@@ -154,6 +154,13 @@ class AppProvider extends ChangeNotifier {
 
   Future<bool> reExportLastSync() => SyncService.instance.reExportLast();
 
+  Future<List<OutboxRecord>> listSyncOutbox() => SyncService.instance.listOutbox();
+
+  Future<List<InboxRecord>> listSyncInbox() => SyncService.instance.listInbox();
+
+  Future<void> reShareOutboxRecord(OutboxRecord record) =>
+      SyncService.instance.reShareOutboxRecord(record);
+
   Future<String?> pickSyncAckFile() => SyncService.instance.pickAckFile();
 
   /// يطبّق ملفًا واردًا من المدير (تأكيد مزامنة أو حزمة تحديث)، ثم يعيد

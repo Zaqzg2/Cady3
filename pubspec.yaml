@@ -1,7 +1,7 @@
 name: cady_sales_app
 description: تطبيق مندوب مبيعات - كادي للمنظفات
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -74,9 +74,25 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
   assets:
     - assets/images/
     - assets/fonts/
+
+# توليد أيقونة التطبيق من الشعار الفعلي (assets/images/app_icon.png وهي
+# نسخة مربّعة بخلفية بيضاء لكل أحجام mipmap + assets/images/
+# app_icon_foreground.png نسخة مربّعة بخلفية شفافة للأيقونة المتكيّفة على
+# أندرويد 8+، كلاهما مُولَّد من الشعار الأصلي بمعالجة تلقائية (تربيع +
+# توسيط + هامش أمان). خلفية الأيقونة المتكيّفة بيضاء عمدًا (مو أحمر
+# العلامة التجارية) لأن الشعار نفسه أحمر غالبًا — أحمر فوق أحمر يكاد
+# يختفي، يبقى فقط الخط الأبيض الرفيع حول الحروف ظاهرًا. التشغيل:
+# dart run flutter_launcher_icons (مضافة كخطوة CI — راجع build-apk.yml).
+flutter_launcher_icons:
+  android: true
+  image_path: "assets/images/app_icon.png"
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/images/app_icon_foreground.png"
+  min_sdk_android: 21

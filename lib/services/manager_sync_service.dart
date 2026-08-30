@@ -69,6 +69,13 @@ class ManagerSyncService {
     return _buildPreview(data, fileName);
   }
 
+  /// نفس معاينة pickAndPreview لكن من محتوى جاهز بدل فتح منتقي الملفات —
+  /// تُستخدم عند وصول ملف عبر مشاركة أندرويد مباشرة (راجع ShareIntentService)
+  Future<ImportPreview> previewFromContent(String jsonContent, String fileName) async {
+    final Map<String, dynamic> data = jsonDecode(jsonContent);
+    return _buildPreview(data, fileName);
+  }
+
   Future<ImportPreview> _buildPreview(
       Map<String, dynamic> data, String fileName) async {
     int errors = 0;

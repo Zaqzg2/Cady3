@@ -3,12 +3,74 @@ import 'package:provider/provider.dart';
 
 import '../../providers/app_provider.dart';
 import '../../models/user_account.dart';
+import '../../models/sync_log_entry.dart';
+import '../../models/export_log_entry.dart';
+import '../../services/manager_sync_service.dart';
+import '../../theme/app_theme.dart';
+import 'manager_sync_hub_screen.dart';
 
-/// لوحة تحكم المدير: نظرة سريعة على عدد المندوبين وحالتهم. أعمدة
-/// المزامنة (آخر مزامنة/عدد العمليات) ستُفعَّل مع شاشتي الاستيراد
-/// والتصدير القادمتين
+/// لوحة تحكم المدير: نظرة سريعة على عدد المندوبين وحالتهم، وبطاقة نشاط
+/// المزامنة الأخير (من سجلّي الاستيراد والتصدير الفعليين) تفتح على مركز
+/// المزامنة الكامل عند الضغط
 class ManagerDashboardScreen extends StatelessWidget {
   const ManagerDashboardScreen({super.key});
+
+  Future<_SyncActivity?> _loadLatestSyncActivity() async {
+    final imports = await ManagerSyncService.instance.getLog();
+    final exports = await ManagerSyncService.instance.getExportLog();
+
+    SyncLogEntry? latestImport;
+    for (final e in imports) {
+      if (latestImport == null || e.importedAt.isAfter(latestImport.importedAt)) {
+        latestImport = e;
+      }
+    }
+    ExportLogEntry? latestExport;
+    for (final e in exports) {
+      if (latestExport == null || e.createdAt.isAfter(latestExport.createdAt)) {
+        latestExport = e;
+      }
+    }
+
+    if (latestImport == null && latestExport == null) return null;
+
+    final importIsNewer = latestExport == null ||
+        (latestImport != null &&
+            latestImport.importedAt.isAfter(latestExport.createdAt));
+
+    if (importIsNewer && latestImport != null) {
+      return _SyncActivity(
+        time: latestImport.importedAt,
+        text: 'استيراد من ${latestImport.repDisplayName.isNotEmpty ? latestImport.repDisplayName : 'مندوب'}',
+        hasError: latestImport.errorsCount > 0,
+      );
+    }
+    return _SyncActivity(
+      time: latestExport!.createdAt,
+      text: 'تحديث أُرسل ← ${latestExport.targetLabel}',
+      hasError: false,
+    );
+  }
+
+  String _relativeTime(DateTime d) {
+    final now = DateTime.now();
+    final diff = now.difference(d);
+    if (diff.inMinutes < 1) return 'الآن';
+    if (diff.inMinutes < 60) return 'قبل ${diff.inMinutes} دقيقة';
+    final sameDay = d.year == now.year && d.month == now.month && d.day == now.day;
+    if (sameDay) {
+      final time =
+          '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+      return 'اليوم $time';
+    }
+    final yesterday = now.subtract(const Duration(days: 1));
+    final wasYesterday = d.year == yesterday.year &&
+        d.month == yesterday.month &&
+        d.day == yesterday.day;
+    if (wasYesterday) return 'أمس';
+    if (diff.inDays < 7) return 'قبل ${diff.inDays} يوم';
+    return '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
+  }
 
   Future<void> _confirmLogout(BuildContext context) async {
     final app = context.read<AppProvider>();
@@ -65,7 +127,7 @@ class ManagerDashboardScreen extends StatelessWidget {
                       label: 'إجمالي المندوبين',
                       value: '${reps.length}',
                       icon: Icons.groups,
-                      color: Colors.indigo,
+                      color: AppTheme.primaryDark,
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -74,28 +136,86 @@ class ManagerDashboardScreen extends StatelessWidget {
                       label: 'مندوبون نشطون',
                       value: '$activeReps',
                       icon: Icons.check_circle,
-                      color: Colors.green,
+                      color: AppTheme.syncSuccess,
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 20),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline, color: Colors.grey.shade600),
-                      const SizedBox(width: 10),
-                      const Expanded(
-                        child: Text(
-                          'بيانات المزامنة (آخر مزامنة، عدد العمليات المستلمة) ستظهر هنا بعد تفعيل شاشتي الاستيراد والتصدير',
-                          style: TextStyle(color: Colors.black54, fontSize: 13),
+              FutureBuilder<_SyncActivity?>(
+                future: _loadLatestSyncActivity(),
+                builder: (context, syncSnap) {
+                  final loading = syncSnap.connectionState == ConnectionState.waiting;
+                  final activity = syncSnap.data;
+                  final hasError = activity?.hasError ?? false;
+                  final iconColor = activity == null
+                      ? Colors.grey.shade500
+                      : hasError
+                          ? AppTheme.syncError
+                          : AppTheme.syncSuccess;
+                  final iconBg = activity == null
+                      ? Colors.grey.shade200
+                      : hasError
+                          ? AppTheme.syncErrorSoft
+                          : AppTheme.syncSuccessSoft;
+                  return Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ManagerSyncHubScreen()),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 40,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(shape: BoxShape.circle, color: iconBg),
+                              child: Icon(
+                                activity == null
+                                    ? Icons.cloud_outlined
+                                    : hasError
+                                        ? Icons.error_outline
+                                        : Icons.check_circle_outline,
+                                size: 20,
+                                color: iconColor,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    loading
+                                        ? 'جارٍ التحقّق من المزامنة...'
+                                        : activity == null
+                                            ? 'لا يوجد نشاط مزامنة بعد'
+                                            : 'آخر نشاط: ${activity.text}',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    loading
+                                        ? ' '
+                                        : activity == null
+                                            ? 'استورد أول ملف من مندوب لتبدأ'
+                                            : _relativeTime(activity.time),
+                                    style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Icon(Icons.chevron_left, color: Colors.grey.shade400),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
+                    ),
+                  );
+                },
               ),
             ],
           );
@@ -103,6 +223,13 @@ class ManagerDashboardScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SyncActivity {
+  final DateTime time;
+  final String text;
+  final bool hasError;
+  const _SyncActivity({required this.time, required this.text, required this.hasError});
 }
 
 class _StatCard extends StatelessWidget {

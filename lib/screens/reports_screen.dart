@@ -5,6 +5,7 @@ import '../models/invoice.dart';
 import '../providers/app_provider.dart';
 import '../services/db_service.dart';
 import '../utils/formatters.dart';
+import '../theme/app_theme.dart';
 
 /// تقارير مختصرة: إجمالي المبيعات، المرتجعات، التحصيلات، وإجمالي
 /// مديونية العملاء — لفترة محددة
@@ -110,7 +111,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   _reportCard('إجمالي المبيعات', d['sales']!, Colors.green, Icons.point_of_sale),
                   _reportCard('إجمالي المرتجعات', d['returns']!, Colors.red, Icons.assignment_return),
                   _reportCard('إجمالي التحصيلات', d['collected']!, Colors.blue, Icons.payments),
-                  _reportCard('صافي المبيعات', d['net']!, Colors.teal, Icons.trending_up),
+                  _reportCard('صافي المبيعات', d['net']!, AppTheme.syncSuccess, Icons.trending_up),
                 ],
               );
             },

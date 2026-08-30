@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
+import 'package:hive_ce_flutter/hive_ce_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import '../models/customer.dart';
 import '../models/product.dart';
@@ -42,6 +44,88 @@ class SyncExportResult {
       {required this.json, required this.fileName, required this.summary});
 }
 
+/// سجل عملية تصدير واحدة أُرسلت فعليًا — يبقى محفوظًا محليًا بعد اختفاء
+/// رسالة النجاح، فيصير "الصادر" قائمة حقيقية تتصفّحها وتعيد مشاركة أي
+/// دفعة سابقة منها بضغطة، بدل أن يتذكّر التطبيق آخر ملف فقط
+class OutboxRecord {
+  final String id;
+  final String fileName;
+  final DateTime createdAt;
+  final String jsonContent;
+  final int customersCount;
+  final int productsCount;
+  final int invoicesCount;
+  final int receiptsCount;
+
+  OutboxRecord({
+    required this.id,
+    required this.fileName,
+    required this.createdAt,
+    required this.jsonContent,
+    required this.customersCount,
+    required this.productsCount,
+    required this.invoicesCount,
+    required this.receiptsCount,
+  });
+
+  int get totalRecords =>
+      customersCount + productsCount + invoicesCount + receiptsCount;
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'fileName': fileName,
+        'createdAt': createdAt.toIso8601String(),
+        'jsonContent': jsonContent,
+        'customersCount': customersCount,
+        'productsCount': productsCount,
+        'invoicesCount': invoicesCount,
+        'receiptsCount': receiptsCount,
+      };
+
+  factory OutboxRecord.fromMap(Map<String, dynamic> m) => OutboxRecord(
+        id: m['id'] as String,
+        fileName: m['fileName'] as String,
+        createdAt: DateTime.parse(m['createdAt'] as String),
+        jsonContent: m['jsonContent'] as String,
+        customersCount: m['customersCount'] as int? ?? 0,
+        productsCount: m['productsCount'] as int? ?? 0,
+        invoicesCount: m['invoicesCount'] as int? ?? 0,
+        receiptsCount: m['receiptsCount'] as int? ?? 0,
+      );
+}
+
+/// سجل ملف وارد عُولج بنجاح (تأكيد مزامنة أو حزمة تحديث) — أثر يبقى
+/// يمكن مراجعته لاحقًا لمعرفة "هل استوردت هذا فعلًا ومتى؟". لا يشمل
+/// ملفات لم تُفتح بعد، لأن التطبيق لا يعرف بوجودها قبل أن يختارها
+/// المستخدم يدويًا عبر منتقي الملفات
+class InboxRecord {
+  final String id;
+  final DateTime receivedAt;
+  final String type; // sync_ack | update_package
+  final String summary;
+
+  InboxRecord({
+    required this.id,
+    required this.receivedAt,
+    required this.type,
+    required this.summary,
+  });
+
+  Map<String, dynamic> toMap() => {
+        'id': id,
+        'receivedAt': receivedAt.toIso8601String(),
+        'type': type,
+        'summary': summary,
+      };
+
+  factory InboxRecord.fromMap(Map<String, dynamic> m) => InboxRecord(
+        id: m['id'] as String,
+        receivedAt: DateTime.parse(m['receivedAt'] as String),
+        type: m['type'] as String,
+        summary: m['summary'] as String,
+      );
+}
+
 /// جانب المندوب من المزامنة: تجميع العمليات المعلّقة، تصديرها كملف JSON
 /// للمشاركة مع المدير، وتخزين آخر ملف صُدِّر لإعادة إرساله عند الحاجة
 /// بدون توليده من جديد. لا يُغيّر أي سجل حالته هنا إلى "متزامن" — هذا
@@ -53,6 +137,101 @@ class SyncService {
   static const _lastExportJsonKey = 'last_export_json';
   static const _lastExportNameKey = 'last_export_name';
   static const _lastExportAtKey = 'last_export_at';
+
+  static const _outboxBoxName = 'sync_outbox_log';
+  static const _inboxBoxName = 'sync_inbox_log';
+  static const _maxKeptHistory = 30;
+  final _uuid = const Uuid();
+
+  Box? _outboxBox;
+  Future<Box> get _outbox async {
+    _outboxBox ??= await Hive.openBox(_outboxBoxName);
+    return _outboxBox!;
+  }
+
+  Box? _inboxBox;
+  Future<Box> get _inbox async {
+    _inboxBox ??= await Hive.openBox(_inboxBoxName);
+    return _inboxBox!;
+  }
+
+  Future<void> _saveOutboxRecord(SyncExportResult result) async {
+    final record = OutboxRecord(
+      id: _uuid.v4(),
+      fileName: result.fileName,
+      createdAt: DateTime.now(),
+      jsonContent: result.json,
+      customersCount: result.summary.customers.length,
+      productsCount: result.summary.products.length,
+      invoicesCount: result.summary.invoices.length,
+      receiptsCount: result.summary.receipts.length,
+    );
+    final box = await _outbox;
+    await box.put(record.id, record.toMap());
+    await _pruneOutbox(box);
+  }
+
+  Future<void> _pruneOutbox(Box box) async {
+    if (box.length <= _maxKeptHistory) return;
+    final records = box.values
+        .map((v) => OutboxRecord.fromMap(Map<String, dynamic>.from(v)))
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    for (final old in records.skip(_maxKeptHistory)) {
+      await box.delete(old.id);
+    }
+  }
+
+  /// كل عمليات التصدير المُرسلة سابقًا، الأحدث أولًا
+  Future<List<OutboxRecord>> listOutbox() async {
+    final box = await _outbox;
+    final records = box.values
+        .map((v) => OutboxRecord.fromMap(Map<String, dynamic>.from(v)))
+        .toList();
+    records.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return records;
+  }
+
+  /// يعيد مشاركة دفعة صادرة سابقة بعينها (مو الأخيرة بالضرورة) دون
+  /// توليدها من جديد
+  Future<void> reShareOutboxRecord(OutboxRecord record) async {
+    final bytes = Uint8List.fromList(utf8.encode(record.jsonContent));
+    await ShareUtil.shareBytes(bytes, record.fileName,
+        mimeType: 'application/json', text: 'إعادة إرسال ملف مزامنة');
+  }
+
+  Future<void> _saveInboxRecord(String type, String summary) async {
+    final record = InboxRecord(
+      id: _uuid.v4(),
+      receivedAt: DateTime.now(),
+      type: type,
+      summary: summary,
+    );
+    final box = await _inbox;
+    await box.put(record.id, record.toMap());
+    await _pruneInbox(box);
+  }
+
+  Future<void> _pruneInbox(Box box) async {
+    if (box.length <= _maxKeptHistory) return;
+    final records = box.values
+        .map((v) => InboxRecord.fromMap(Map<String, dynamic>.from(v)))
+        .toList()
+      ..sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+    for (final old in records.skip(_maxKeptHistory)) {
+      await box.delete(old.id);
+    }
+  }
+
+  /// كل الملفات الواردة التي عُولجت بنجاح سابقًا، الأحدث أولًا
+  Future<List<InboxRecord>> listInbox() async {
+    final box = await _inbox;
+    final records = box.values
+        .map((v) => InboxRecord.fromMap(Map<String, dynamic>.from(v)))
+        .toList();
+    records.sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+    return records;
+  }
 
   Future<PendingSummary> getPendingSummary() async {
     final customers = (await DbService.instance.getCustomers())
@@ -117,6 +296,7 @@ class SyncService {
       text: 'ملف مزامنة - ${rep.displayName}',
     );
     await _cacheLastExport(result);
+    await _saveOutboxRecord(result);
     return result;
   }
 
@@ -168,10 +348,17 @@ class SyncService {
     final type = data['type'] as String?;
     if (type == 'sync_ack') {
       final count = await _applyAck(data);
+      await _saveInboxRecord('sync_ack', 'تأكيد مزامنة — $count عملية اعتُمدت');
       return IncomingSyncResult(type: 'sync_ack', ackedCount: count);
     }
     if (type == 'update_package') {
-      return _applyUpdatePackage(data);
+      final result = await _applyUpdatePackage(data);
+      await _saveInboxRecord(
+        'update_package',
+        'تحديث — ${result.productsUpdated} منتج، ${result.customersUpdated} عميل'
+            '${result.settingsUpdated ? '، وبيانات الشركة' : ''}',
+      );
+      return result;
     }
     throw const FormatException('نوع ملف غير معروف — تأكد أن الملف من تطبيق كادي');
   }

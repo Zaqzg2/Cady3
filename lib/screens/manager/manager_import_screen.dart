@@ -2,13 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/app_provider.dart';
+import '../../models/invoice.dart';
 import '../../services/manager_sync_service.dart';
+import '../../theme/app_theme.dart';
+import '../../utils/formatters.dart';
 
 /// استيراد ملف مزامنة من مندوب: اختيار الملف، معاينة الأرقام (فواتير/
 /// سندات/عملاء جدد/تكرارات/أخطاء)، ثم اعتماد أو إلغاء. الاعتماد فقط هو
 /// ما يكتب البيانات فعليًا ويحوّلها إلى "متزامنة"
 class ManagerImportScreen extends StatefulWidget {
-  const ManagerImportScreen({super.key});
+  final String? initialContent;
+  final String? initialFileName;
+  const ManagerImportScreen({super.key, this.initialContent, this.initialFileName});
 
   @override
   State<ManagerImportScreen> createState() => _ManagerImportScreenState();
@@ -19,6 +24,34 @@ class _ManagerImportScreenState extends State<ManagerImportScreen> {
   String? _ackJson;
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // وصل التطبيق مباشرة بملف جاهز (من ShareIntentService) — نعرض معاينته
+    // فورًا بدل انتظار المستخدم يفتح منتقي الملفات بنفسه من جديد
+    final content = widget.initialContent;
+    if (content != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _previewFromContent(content));
+    }
+  }
+
+  Future<void> _previewFromContent(String content) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final preview = await ManagerSyncService.instance
+          .previewFromContent(content, widget.initialFileName ?? 'ملف مُستلَم.json');
+      if (!mounted) return;
+      setState(() => _preview = preview);
+    } catch (e) {
+      setState(() => _error = 'تعذّرت قراءة الملف: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   Future<void> _pick() async {
     setState(() {
@@ -95,7 +128,7 @@ class _ManagerImportScreenState extends State<ManagerImportScreen> {
           const Text('اختر ملف المزامنة المُرسَل من المندوب', textAlign: TextAlign.center),
           if (_error != null) ...[
             const SizedBox(height: 12),
-            Text(_error!, style: const TextStyle(color: Colors.red), textAlign: TextAlign.center),
+            Text(_error!, style: TextStyle(color: AppTheme.syncError), textAlign: TextAlign.center),
           ],
           const SizedBox(height: 20),
           FilledButton.icon(
@@ -109,6 +142,11 @@ class _ManagerImportScreenState extends State<ManagerImportScreen> {
   }
 
   Widget _buildPreviewState(ImportPreview p) {
+    final salesTotal = p.invoices
+        .where((i) => i.kind != InvoiceKind.saleReturn)
+        .fold<double>(0, (sum, i) => sum + i.grandTotal);
+    final receiptsTotal = p.receipts.fold<double>(0, (sum, r) => sum + r.amount);
+
     return ListView(
       children: [
         Card(
@@ -117,32 +155,44 @@ class _ManagerImportScreenState extends State<ManagerImportScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('من: ${p.repDisplayName}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                Text('طلب مزامنة جديد',
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5)),
+                const SizedBox(height: 2),
+                Text(p.repDisplayName,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
                 Text(p.fileName, style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
                 const Divider(height: 24),
-                _StatLine(label: 'عدد الفواتير', value: p.invoicesCount, color: Colors.indigo),
-                _StatLine(label: 'عدد السندات', value: p.receiptsCount, color: Colors.teal),
-                _StatLine(label: 'العملاء الجدد', value: p.newCustomersCount, color: Colors.green),
-                _StatLine(label: 'التكرارات', value: p.duplicatesCount, color: Colors.orange),
-                _StatLine(label: 'الأخطاء', value: p.errorsCount, color: Colors.red),
+                _StatLine(label: 'عدد الفواتير', value: p.invoicesCount, color: AppTheme.primary),
+                _StatLine(label: 'عدد السندات', value: p.receiptsCount, color: AppTheme.syncSuccess),
+                _StatLine(label: 'العملاء الجدد', value: p.newCustomersCount, color: AppTheme.syncSuccess),
+                if (p.duplicatesCount > 0)
+                  _StatLine(label: 'التكرارات', value: p.duplicatesCount, color: AppTheme.syncPending),
+                if (p.errorsCount > 0)
+                  _StatLine(label: 'الأخطاء', value: p.errorsCount, color: AppTheme.syncError),
+                if (salesTotal > 0 || receiptsTotal > 0) ...[
+                  const Divider(height: 24),
+                  if (salesTotal > 0)
+                    _AmountLine(label: 'إجمالي المبيعات', value: salesTotal),
+                  if (receiptsTotal > 0)
+                    _AmountLine(label: 'إجمالي التحصيل', value: receiptsTotal),
+                ],
               ],
             ),
           ),
         ),
         if (_error != null) ...[
           const SizedBox(height: 12),
-          Text(_error!, style: const TextStyle(color: Colors.red), textAlign: TextAlign.center),
+          Text(_error!, style: TextStyle(color: AppTheme.syncError), textAlign: TextAlign.center),
         ],
         const SizedBox(height: 20),
         Row(
           children: [
             Expanded(
-              child: OutlinedButton(onPressed: _reset, child: const Text('إلغاء')),
+              child: OutlinedButton(onPressed: _reset, child: const Text('مراجعة لاحقًا')),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: FilledButton(onPressed: _approve, child: const Text('اعتماد')),
+              child: FilledButton(onPressed: _approve, child: const Text('اعتماد الكل')),
             ),
           ],
         ),
@@ -155,7 +205,7 @@ class _ManagerImportScreenState extends State<ManagerImportScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.check_circle_outline, size: 56, color: Colors.green),
+          Icon(Icons.check_circle_outline, size: 56, color: AppTheme.syncSuccess),
           const SizedBox(height: 16),
           Text('تم اعتماد بيانات ${p.repDisplayName} بنجاح', textAlign: TextAlign.center),
           const SizedBox(height: 8),
@@ -172,6 +222,27 @@ class _ManagerImportScreenState extends State<ManagerImportScreen> {
           ),
           const SizedBox(height: 12),
           TextButton(onPressed: _reset, child: const Text('استيراد ملف آخر')),
+        ],
+      ),
+    );
+  }
+}
+
+class _AmountLine extends StatelessWidget {
+  final String label;
+  final double value;
+  const _AmountLine({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+              child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
+          Text(Formatters.money(value),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
         ],
       ),
     );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/manager_sync_service.dart';
+import '../../theme/app_theme.dart';
 import 'manager_import_screen.dart';
 
 class _LogItem {
@@ -21,6 +22,8 @@ class _LogItem {
 
 /// سجل موحّد لكل عمليات المزامنة عند المدير: الاستيراد من المندوبين
 /// (سجل الاستيراد) والتصدير إليهم (سجل التصدير)، مرتّبة زمنيًا معًا
+/// بعرض Timeline — خط متصل بين كل عملية والتالية، بدل بطاقات منفصلة
+/// بلا رابط بصري بينها
 class ManagerSyncLogScreen extends StatefulWidget {
   const ManagerSyncLogScreen({super.key});
 
@@ -80,14 +83,24 @@ class _ManagerSyncLogScreenState extends State<ManagerSyncLogScreen> {
         '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
   }
 
+  Color _colorFor(_LogItem e) {
+    if (e.hasError) return AppTheme.syncError;
+    return e.isImport ? AppTheme.syncSuccess : AppTheme.primary;
+  }
+
+  IconData _iconFor(_LogItem e) {
+    if (e.hasError) return Icons.error_outline;
+    return e.isImport ? Icons.arrow_downward : Icons.arrow_upward;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('سجل المزامنة')),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          await Navigator.push(context,
-              MaterialPageRoute(builder: (_) => const ManagerImportScreen()));
+          await Navigator.push(
+              context, MaterialPageRoute(builder: (_) => const ManagerImportScreen()));
           _load();
         },
         icon: const Icon(Icons.file_download_outlined),
@@ -97,31 +110,59 @@ class _ManagerSyncLogScreenState extends State<ManagerSyncLogScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _items.isEmpty
               ? const Center(child: Text('لا توجد عمليات مزامنة بعد'))
-              : ListView.separated(
+              : ListView.builder(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
                   itemCount: _items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder: (context, i) {
                     final e = _items[i];
-                    final color = e.hasError
-                        ? Colors.red
-                        : (e.isImport ? Colors.green : Colors.indigo);
-                    return Card(
-                      child: ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: color.withOpacity(0.12),
-                          child: Icon(
-                            e.hasError
-                                ? Icons.error_outline
-                                : (e.isImport
-                                    ? Icons.arrow_downward
-                                    : Icons.arrow_upward),
-                            color: color,
-                            size: 18,
+                    final isLast = i == _items.length - 1;
+                    final color = _colorFor(e);
+                    return IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Column(
+                            children: [
+                              Container(
+                                width: 34,
+                                height: 34,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: color.withOpacity(0.12),
+                                  border: Border.all(color: color, width: 1.4),
+                                ),
+                                alignment: Alignment.center,
+                                child: Icon(_iconFor(e), color: color, size: 16),
+                              ),
+                              if (!isLast)
+                                Expanded(
+                                  child: Container(
+                                    width: 2,
+                                    margin: const EdgeInsets.symmetric(vertical: 2),
+                                    color: Theme.of(context).dividerColor,
+                                  ),
+                                ),
+                            ],
                           ),
-                        ),
-                        title: Text(e.title),
-                        subtitle: Text('${_fmt(e.time)} • ${e.subtitle}'),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Padding(
+                              padding: EdgeInsets.only(bottom: isLast ? 0 : 18, top: 2),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(e.title,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${_fmt(e.time)}${e.subtitle.isNotEmpty ? ' • ${e.subtitle}' : ''}',
+                                    style: TextStyle(color: Colors.grey.shade600, fontSize: 12.5),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   },

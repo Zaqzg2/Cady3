@@ -1,6 +1,6 @@
 // ignore_for_file: type=lint
 //
-// إعدادات Firebase لمشروع "كادي للمنظفات" (Firebase project: cady-34220).
+// إعدادات Firebase لمشروع "كادي" (Firebase project: cady-34220).
 //
 // ملاحظة: هذا الملف عادة تولّده أداة flutterfire CLI تلقائيًا، لكن هذي
 // الأداة تحتاج Flutter/Dart SDK محليًا وهو غير متوفر هنا (التطوير بالكامل

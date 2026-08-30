@@ -13,12 +13,15 @@ import 'screens/home_screen.dart';
 import 'screens/customers_screen.dart';
 import 'screens/products_screen.dart';
 import 'screens/reports_screen.dart';
+import 'screens/settings_screen.dart';
 import 'screens/lock_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/manager/manager_root_nav.dart';
 import 'services/auth_service.dart';
+import 'services/share_intent_service.dart';
 import 'models/user_account.dart';
 import 'widgets/privacy_cover_overlay.dart';
+import 'widgets/sync/incoming_share_sheet.dart';
 
 /// يحسب أقصر مدة خمول مؤدّية لقفل التطبيق تلقائيًا، بين خيار "القفل
 /// التلقائي" و"تسجيل الخروج التلقائي" (أيهما أقصر يُطبَّق أولاً)، أو
@@ -115,7 +118,7 @@ class CadySalesApp extends StatelessWidget {
       child: Consumer<AppProvider>(
         builder: (context, app, _) {
           return MaterialApp(
-            title: 'كادي للمنظفات',
+            title: 'كادي',
             debugShowCheckedModeBanner: false,
             locale: const Locale('ar'),
             supportedLocales: const [Locale('ar')],
@@ -261,7 +264,7 @@ class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _check();
+    _check().then((_) => _checkPendingShare());
   }
 
   @override
@@ -278,7 +281,21 @@ class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
     }
     final pausedAt = _pausedAt;
     _pausedAt = null;
-    if (pausedAt != null) _maybeLock(pausedAt);
+    if (pausedAt != null) {
+      _maybeLock(pausedAt).then((_) => _checkPendingShare());
+    } else {
+      _checkPendingShare();
+    }
+  }
+
+  /// يتحقق من وجود ملف وصل عبر مشاركة أندرويد (واتساب مثلاً) عند إقلاع
+  /// التطبيق وعند عودته للواجهة. لا يُعرض شيء قبل فتح قفل التطبيق (لو
+  /// مفعّل) حتى لا يُكشف عن وصول ملف على شاشة القفل.
+  Future<void> _checkPendingShare() async {
+    if (_needsUnlock == true || !mounted) return;
+    final share = await ShareIntentService.getPendingShare();
+    if (share == null || !mounted) return;
+    await showIncomingShareSheet(context, fileName: share.fileName, content: share.content);
   }
 
   Future<void> _maybeLock(DateTime pausedAt) async {
@@ -327,7 +344,11 @@ class _AppGateState extends State<AppGate> with WidgetsBindingObserver {
   }
 }
 
-/// شريط التنقل السفلي: الرئيسية / العملاء / المنتجات / التقارير
+/// شريط تنقّل سفلي + سحب أفقي على نفس الصفحات: من الرئيسية، السحب
+/// لليمين ينقل للعملاء ثم المنتجات (وصولًا للتقارير)، والسحب لليسار
+/// يفتح الإعدادات كصفحة جانبية لا تظهر بشريط التنقل نفسه. كل ذلك عبر
+/// PageController واحد متزامن مع NavigationBar، فلمس أي وسيلة يحرّك
+/// الأخرى تلقائيًا
 class RootNav extends StatefulWidget {
   const RootNav({super.key});
 
@@ -336,9 +357,15 @@ class RootNav extends StatefulWidget {
 }
 
 class _RootNavState extends State<RootNav> {
-  int _index = 0;
+  // ترتيب الصفحات بالفهرس: 0=الإعدادات (سحب يسارًا فقط، بلا زر بالشريط)
+  // 1=الرئيسية (البداية) 2=العملاء 3=المنتجات 4=التقارير
+  static const int _homeIndex = 1;
+
+  final PageController _controller = PageController(initialPage: _homeIndex);
+  int _pageIndex = _homeIndex;
 
   final _pages = const [
+    SettingsScreen(),
     HomeScreen(),
     CustomersScreen(),
     ProductsScreen(),
@@ -346,12 +373,33 @@ class _RootNavState extends State<RootNav> {
   ];
 
   @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _goToNavIndex(int navIndex) {
+    _controller.animateToPage(
+      navIndex + 1,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // شريط التنقل السفلي يعرض نفس الوجهات الأربع القديمة فقط؛ الإعدادات
+    // مقصودة أن تبقى مخصّصة للسحب حتى لا يتكرر الوصول لها بطريقتين
+    final navIndex = (_pageIndex - 1).clamp(0, 3);
     return Scaffold(
-      body: IndexedStack(index: _index, children: _pages),
+      body: PageView(
+        controller: _controller,
+        onPageChanged: (i) => setState(() => _pageIndex = i),
+        children: _pages,
+      ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        selectedIndex: navIndex,
+        onDestinationSelected: _goToNavIndex,
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home), label: 'الرئيسية'),
           NavigationDestination(icon: Icon(Icons.people), label: 'العملاء'),

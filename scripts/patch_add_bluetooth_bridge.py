@@ -21,15 +21,27 @@ BRIDGE_DEST = PACKAGE_DIR / "BluetoothPrinterBridge.kt"
 
 CHANNEL_MARKER = "BluetoothPrinterBridge.CHANNEL"
 
-REGISTRATION_BLOCK = """
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-        MethodChannel(
+REGISTRATION_LINE = """        MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             BluetoothPrinterBridge.CHANNEL
         ).setMethodCallHandler(BluetoothPrinterBridge(applicationContext))
-    }
 """
+
+NEW_CONFIGURE_ENGINE_BLOCK = """
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+""" + REGISTRATION_LINE + """    }
+"""
+
+# قد يعمل هذا السكربت بعد سكربت جسر آخر (مشاركة الملفات مثلًا) سبق وأنشأ
+# تابع configureFlutterEngine بنفسه — هذا النمط يكتشف ذلك فيُضيف تسجيل
+# قناتنا بداخله بدل إنشاء تابع override مكرر (خطأ ترجمة في Kotlin). يجعل
+# ترتيب تشغيل سكربتات الجسور غير مهم — كلاهما يتعرّف على الآخر بغض النظر
+# عن من يعمل أولًا.
+EXISTING_CONFIGURE_RE = re.compile(
+    r"(override fun configureFlutterEngine\(flutterEngine: FlutterEngine\)\s*\{\s*\n"
+    r"\s*super\.configureFlutterEngine\(flutterEngine\)\n)"
+)
 
 NEEDED_IMPORTS = [
     "import io.flutter.embedding.engine.FlutterEngine",
@@ -77,16 +89,24 @@ def patch_main_activity(path: Path) -> None:
 
     text = add_missing_imports(text)
 
+    if EXISTING_CONFIGURE_RE.search(text):
+        # تابع configureFlutterEngine موجود مسبقًا (من سكربت جسر آخر) —
+        # أضف تسجيل قناتنا بداخله بدل إنشاء تابع مكرر
+        text = EXISTING_CONFIGURE_RE.sub(r"\1" + REGISTRATION_LINE, text, count=1)
+        path.write_text(text, encoding="utf-8")
+        print(f"تم ربط قناة BluetoothPrinterBridge داخل {path} (ضمن تابع موجود مسبقًا)")
+        return
+
     # الحالة الشائعة من flutter create: تصريح الصنف بلا جسم إطلاقًا
     #   class MainActivity : FlutterActivity()
     no_body = re.compile(r"(class\s+MainActivity\s*:\s*FlutterActivity\s*\(\s*\))(?!\s*\{)")
     if no_body.search(text):
-        text = no_body.sub(r"\1 {" + REGISTRATION_BLOCK + "}", text, count=1)
+        text = no_body.sub(r"\1 {" + NEW_CONFIGURE_ENGINE_BLOCK + "}", text, count=1)
     else:
         # الصنف له جسم بالفعل { ... } — أدرج التابع مباشرة بعد قوس الفتح
         has_body = re.compile(r"(class\s+MainActivity\s*:\s*FlutterActivity\s*\(\s*\)\s*\{)")
         if has_body.search(text):
-            text = has_body.sub(r"\1" + REGISTRATION_BLOCK, text, count=1)
+            text = has_body.sub(r"\1" + NEW_CONFIGURE_ENGINE_BLOCK, text, count=1)
         else:
             print(f"تحذير: تعذّر التعرف على تصريح الصنف داخل {path} — لم يُعدَّل، أضفه يدويًا.")
             return

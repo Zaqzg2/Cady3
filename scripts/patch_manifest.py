@@ -47,6 +47,41 @@ def _ensure_queries(content: str) -> str:
     return content.replace("</manifest>", QUERIES_BLOCK + "\n</manifest>", 1)
 
 
+# يسمح لكادي بالظهور كخيار عند مشاركة ملف مزامنة/نسخة احتياطية من تطبيق
+# آخر (واتساب مثلًا)، أو عند فتح ملف .json مباشرة من مدير الملفات — بدل
+# اضطرار المستخدم لفتح منتقي الملفات والبحث عن الملف يدويًا (راجع
+# ShareIntentBridge.kt وشرحها لتفاصيل الآلية الكاملة، بما فيها الطرف
+# الأصلي الذي يقرأ الملف فعليًا).
+SHARE_INTENT_FILTER_BLOCK = """
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/json" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/json" />
+            </intent-filter>"""
+
+MAIN_ACTIVITY_RE = re.compile(r'<activity\b[^>]*android:name="\.MainActivity"[^>]*>')
+
+
+def _ensure_share_intent_filter(content: str) -> str:
+    if "android.intent.action.SEND" in content:
+        return content
+    m = MAIN_ACTIVITY_RE.search(content)
+    if not m:
+        print("تحذير: لم يُعثر على وسم <activity> الخاص بـ MainActivity — تخطي فلتر المشاركة.")
+        return content
+    close_idx = content.find("</activity>", m.end())
+    if close_idx == -1:
+        print("تحذير: لم يُعثر على </activity> بعد MainActivity — تخطي فلتر المشاركة.")
+        return content
+    return content[:close_idx] + SHARE_INTENT_FILTER_BLOCK + "\n        " + content[close_idx:]
+
+
 def main():
     if not MANIFEST_PATH.exists():
         print(f"تحذير: لم يُعثر على {MANIFEST_PATH} — تخطي الترقيع.")
@@ -73,6 +108,11 @@ def main():
     content = _ensure_queries(content)
     if "<queries>" not in original:
         print("تمت إضافة وسم <queries> لدعم url_launcher (اتصال/واتساب/خرائط).")
+
+    before_share_filter = content
+    content = _ensure_share_intent_filter(content)
+    if "android.intent.action.SEND" not in before_share_filter:
+        print("تمت إضافة intent-filter لاستقبال ملفات JSON مُشارَكة من تطبيقات أخرى.")
 
     if content != original:
         MANIFEST_PATH.write_text(content, encoding="utf-8")
