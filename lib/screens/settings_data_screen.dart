@@ -1,17 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
-import '../models/company_settings.dart';
-import '../providers/app_provider.dart';
-import '../services/auto_backup_service.dart';
 import '../services/data_stats_service.dart';
 import '../services/cleanup_service.dart';
-import '../services/csv_export_service.dart';
-import '../utils/formatters.dart';
-import 'backup_management_screen.dart';
 
-/// البيانات والنسخ الاحتياطي: نسخ يدوي فوري، نسخ تلقائي دوري، استيراد،
-/// حجم البيانات الحالي، تنظيف الصور غير المستخدمة، وتصدير Excel/CSV
+/// حجم البيانات الحالي (فواتير، سندات، عملاء، منتجات، مساحة التخزين)
+/// وتنظيف الصور غير المستخدمة. النسخ الاحتياطي (يدوي/تلقائي/CSV) انتقل
+/// بالكامل لشاشته المستقلة BackupManagementScreen — هذه الشاشة كانت
+/// تكرّر نفس عناصر التحكم فيها (زر النسخ الآن، جدولة تلقائي، تصدير CSV)
+/// فصار للمستخدم صفحتان لنفس الإجراء؛ أُزيل التكرار وبقيت هذه الشاشة
+/// لما هو خاص بها فقط: حجم البيانات والتنظيف
 class SettingsDataScreen extends StatefulWidget {
   const SettingsDataScreen({super.key});
 
@@ -21,28 +18,16 @@ class SettingsDataScreen extends StatefulWidget {
 
 class _SettingsDataScreenState extends State<SettingsDataScreen> {
   bool _busy = false;
-  DateTime? _lastAutoRun;
   late Future<DataStats> _statsFuture;
 
   @override
   void initState() {
     super.initState();
     _statsFuture = DataStatsService.collect();
-    AutoBackupService.lastRunAt().then((v) {
-      if (mounted) setState(() => _lastAutoRun = v);
-    });
   }
 
   void _snack(String msg) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-
-  Future<void> _update(void Function(CompanySettings s) mutate) async {
-    final app = context.read<AppProvider>();
-    final s = app.settings;
-    mutate(s);
-    await app.saveSettings(s);
-    setState(() {});
-  }
 
   Future<void> _cleanup() async {
     setState(() => _busy = true);
@@ -55,22 +40,10 @@ class _SettingsDataScreenState extends State<SettingsDataScreen> {
     }
   }
 
-  Future<void> _exportCsv() async {
-    setState(() => _busy = true);
-    try {
-      await CsvExportService.exportAndShare();
-    } catch (e) {
-      _snack('تعذّر التصدير: $e');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final s = context.watch<AppProvider>().settings;
     return Scaffold(
-      appBar: AppBar(title: const Text('البيانات والنسخ الاحتياطي')),
+      appBar: AppBar(title: const Text('حجم البيانات')),
       body: AbsorbPointer(
         absorbing: _busy,
         child: Opacity(
@@ -78,63 +51,6 @@ class _SettingsDataScreenState extends State<SettingsDataScreen> {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              const Text('نسخ احتياطي', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text('يشمل: العملاء، المنتجات، الفواتير، السندات، والإعدادات',
-                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  icon: const Icon(Icons.folder_special_outlined),
-                  label: const Text('إدارة النسخ الاحتياطية'),
-                  onPressed: () => Navigator.push(context,
-                      MaterialPageRoute(builder: (_) => const BackupManagementScreen())),
-                ),
-              ),
-              const Divider(height: 32),
-
-              const Text('نسخ احتياطي تلقائي', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              SegmentedButton<AutoBackupFrequency>(
-                segments: const [
-                  ButtonSegment(value: AutoBackupFrequency.off, label: Text('معطّل')),
-                  ButtonSegment(value: AutoBackupFrequency.daily, label: Text('يومي')),
-                  ButtonSegment(value: AutoBackupFrequency.weekly, label: Text('أسبوعي')),
-                ],
-                selected: {s.autoBackupFrequency},
-                onSelectionChanged: (v) => _update((s) => s.autoBackupFrequency = v.first),
-              ),
-              if (s.autoBackupFrequency != AutoBackupFrequency.off) ...[
-                const SizedBox(height: 12),
-                const Text('مكان الحفظ', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                RadioListTile<AutoBackupLocation>(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('محلي على الجهاز فقط'),
-                  value: AutoBackupLocation.local,
-                  groupValue: s.autoBackupLocation,
-                  onChanged: (v) => _update((s) => s.autoBackupLocation = v!),
-                ),
-                RadioListTile<AutoBackupLocation>(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('جوجل درايف'),
-                  subtitle: const Text(
-                      'تُحفَظ النسخة محليًا تلقائيًا، وتقدر ترفعها لجوجل درايف بضغطة من زر "نسخ احتياطي يدوي فوري" أعلاه',
-                      style: TextStyle(fontSize: 11)),
-                  value: AutoBackupLocation.driveShare,
-                  groupValue: s.autoBackupLocation,
-                  onChanged: (v) => _update((s) => s.autoBackupLocation = v!),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _lastAutoRun != null
-                      ? 'آخر نسخة تلقائية: ${Formatters.d(_lastAutoRun!)}'
-                      : 'لم يتم إنشاء نسخة تلقائية بعد — ستُنشأ عند فتح التطبيق القادم',
-                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600),
-                ),
-              ],
-              const Divider(height: 32),
-
               const Text('حجم البيانات الحالي', style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               FutureBuilder<DataStats>(
@@ -172,21 +88,6 @@ class _SettingsDataScreenState extends State<SettingsDataScreen> {
                   icon: const Icon(Icons.cleaning_services_outlined),
                   label: const Text('تنظيف الصور القديمة غير المستخدمة'),
                   onPressed: _cleanup,
-                ),
-              ),
-              const Divider(height: 32),
-
-              const Text('تصدير للمراجعة اليدوية', style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text('ملف Excel/CSV منفصل عن النسخة الاحتياطية — للاطّلاع والمراجعة فقط',
-                  style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.table_chart_outlined),
-                  label: const Text('تصدير كل البيانات (Excel/CSV)'),
-                  onPressed: _exportCsv,
                 ),
               ),
             ],

@@ -11,7 +11,9 @@ import 'settings_printing_screen.dart';
 import 'settings_appearance_screen.dart';
 import 'settings_privacy_screen.dart';
 import 'settings_data_screen.dart';
+import 'backup_management_screen.dart';
 import 'sync_screen.dart';
+import '../theme/app_theme.dart';
 
 /// الشاشة الرئيسية للإعدادات — قائمة أقسام بنمط iOS/Android الرسمي:
 /// كل قسم سطر واحد بأيقونة + عنوان + سطر فرعي يلخّص الحالة + سهم يفتح
@@ -84,9 +86,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final privacySubtitle = _passwordEnabled ? 'محمي بكلمة مرور' : 'بدون حماية';
 
     final backupSubtitle = switch (s.autoBackupFrequency) {
-      AutoBackupFrequency.daily => 'نسخ تلقائي يومي',
-      AutoBackupFrequency.weekly => 'نسخ تلقائي أسبوعي',
-      AutoBackupFrequency.off => 'النسخ الاحتياطي والبيانات',
+      AutoBackupFrequency.daily => 'نسخ تلقائي يومي مفعّل',
+      AutoBackupFrequency.weekly => 'نسخ تلقائي أسبوعي مفعّل',
+      AutoBackupFrequency.off => 'يدوي، CSV، وجدولة تلقائية',
     };
 
     return Scaffold(
@@ -107,7 +109,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               SettingsTile(
                 icon: Icons.store_outlined,
-                iconColor: Colors.teal,
+                iconColor: AppTheme.syncSuccess,
                 title: 'بيانات الشركة والمندوب',
                 subtitle: companySubtitle,
                 onTap: () => _open(const SettingsCompanyScreen()),
@@ -145,8 +147,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               SettingsTile(
                 icon: Icons.backup_outlined,
                 iconColor: Colors.green,
-                title: 'البيانات والنسخ الاحتياطي',
+                title: 'النسخ الاحتياطي',
                 subtitle: backupSubtitle,
+                onTap: () => _open(const BackupManagementScreen()),
+              ),
+              SettingsTile(
+                icon: Icons.storage_outlined,
+                iconColor: Colors.brown,
+                title: 'حجم البيانات',
+                subtitle: 'إحصاءات التخزين وتنظيف الصور غير المستخدمة',
                 onTap: () => _open(const SettingsDataScreen()),
               ),
             ],

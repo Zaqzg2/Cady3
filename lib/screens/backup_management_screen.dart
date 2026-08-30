@@ -10,7 +10,6 @@ import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import '../widgets/sync/sync_section_header.dart';
 import '../widgets/sync/sync_status_panel.dart';
-import 'settings_data_screen.dart';
 
 /// إدارة النسخ الاحتياطية: ثلاث بطاقات فعل (CSV، تلقائي، يدوي)، ثم قائمة
 /// موحّدة لكل نسخة محفوظة (يدوية وتلقائية معًا، موسومة بمصدرها) — كل نسخة
@@ -168,6 +167,78 @@ class _BackupManagementScreenState extends State<BackupManagementScreen> {
     if (mounted) setState(() {});
   }
 
+  /// كل ما يخص جدولة النسخ التلقائي (اليومي/الأسبوعي، والحفظ محليًا أو
+  /// جوجل درايف) صار هنا فقط بدل شاشة منفصلة كانت تكرّر مفتاح التشغيل
+  /// نفسه الموجود بالبطاقة أعلاه
+  Future<void> _openScheduleDialog() async {
+    final app = context.read<AppProvider>();
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final settings = app.settings;
+          return AlertDialog(
+            title: const Text('جدولة النسخ التلقائي'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SegmentedButton<AutoBackupFrequency>(
+                  segments: const [
+                    ButtonSegment(value: AutoBackupFrequency.off, label: Text('معطّل')),
+                    ButtonSegment(value: AutoBackupFrequency.daily, label: Text('يومي')),
+                    ButtonSegment(value: AutoBackupFrequency.weekly, label: Text('أسبوعي')),
+                  ],
+                  selected: {settings.autoBackupFrequency},
+                  onSelectionChanged: (v) async {
+                    settings.autoBackupFrequency = v.first;
+                    await app.saveSettings(settings);
+                    setDialogState(() {});
+                    if (mounted) setState(() {});
+                  },
+                ),
+                if (settings.autoBackupFrequency != AutoBackupFrequency.off) ...[
+                  const SizedBox(height: 14),
+                  const Text('مكان الحفظ', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                  RadioListTile<AutoBackupLocation>(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('محلي على الجهاز فقط'),
+                    value: AutoBackupLocation.local,
+                    groupValue: settings.autoBackupLocation,
+                    onChanged: (v) async {
+                      settings.autoBackupLocation = v!;
+                      await app.saveSettings(settings);
+                      setDialogState(() {});
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                  RadioListTile<AutoBackupLocation>(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('جوجل درايف'),
+                    subtitle: const Text(
+                        'تُحفَظ محليًا تلقائيًا، وتقدر ترفعها لدرايف من أيقونة المشاركة بأي نسخة بالقائمة',
+                        style: TextStyle(fontSize: 11)),
+                    value: AutoBackupLocation.driveShare,
+                    groupValue: settings.autoBackupLocation,
+                    onChanged: (v) async {
+                      settings.autoBackupLocation = v!;
+                      await app.saveSettings(settings);
+                      setDialogState(() {});
+                      if (mounted) setState(() {});
+                    },
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('تم')),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   String _formatDateTime(DateTime? d) {
     if (d == null) return 'لم يحدث بعد';
     final now = DateTime.now();
@@ -239,10 +310,7 @@ class _BackupManagementScreenState extends State<BackupManagementScreen> {
                           onToggle: _toggleAuto,
                           buttonLabel: 'إعداد الجدول',
                           buttonIcon: Icons.tune,
-                          onPressed: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const SettingsDataScreen()),
-                          ),
+                          onPressed: _openScheduleDialog,
                           footer: _loadingExtras
                               ? null
                               : (autoEnabled
