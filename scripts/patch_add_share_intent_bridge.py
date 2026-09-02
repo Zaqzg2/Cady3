@@ -33,11 +33,18 @@ NEEDED_IMPORTS = [
 ]
 
 FIELD_AND_LIFECYCLE_BLOCK = """
-    private lateinit var shareIntentBridge: ShareIntentBridge
+    // "by lazy" مقصود هنا وليس lateinit + تهيئة داخل onCreate: أندرويد
+    // فلاتر يستدعي configureFlutterEngine من *داخل* super.onCreate نفسها
+    // (قبل تنفيذ أي سطر بعدها بجسم onCreate) — فلو هيّأنا shareIntentBridge
+    // بعد super.onCreate لكان configureFlutterEngine يصل قبل التهيئة
+    // ويرمي UninitializedPropertyAccessException (تعطّل فوري عند فتح
+    // التطبيق). "by lazy" يهيّئها عند أول استخدام فعلي (من داخل
+    // configureFlutterEngine ذاتها)، فتكون جاهزة دومًا وقت الحاجة إليها
+    // بغضّ النظر عن ترتيب الاستدعاء الداخلي لفلاتر.
+    private val shareIntentBridge: ShareIntentBridge by lazy { ShareIntentBridge(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        shareIntentBridge = ShareIntentBridge(this)
         shareIntentBridge.offerIntent(intent)
     }
 
